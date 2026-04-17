@@ -627,6 +627,15 @@ jobs:
           EOF
           echo "✅ Oryon flags prepared."
 
+      - name: Apply Unicode Bypass Fix
+        if: inputs.unicode_fix
+        working-directory: kernel_workspace/common
+        run: |
+          PATCH_URL="https://github.com/TheWildJames/kernel_patches/raw/main/common/unicode_bypass_fix_6.1+.patch"
+          wget -qO /tmp/ub_fix.patch "$PATCH_URL" 2>/dev/null && \
+            patch -p1 --forward < /tmp/ub_fix.patch || true
+          echo "Unicode fix applied"
+
       - name: F2FS Optimizations
         if: inputs.f2fs_opt
         working-directory: kernel_workspace
@@ -944,10 +953,8 @@ jobs:
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
             wget https://raw.githubusercontent.com/$GITHUB_REPOSITORY/refs/heads/$GITHUB_REF_NAME/zram.zip || true
           fi
-            AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ github.event.inputs.kernel_version }}_palaziks.zip
-            FULL_VERSION=${{ github.event.inputs.kernel_version }}-palaziks
-            AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ github.event.inputs.kernel_version }}_${{ env.KERNEL_NAME }}.zip
-            FULL_VERSION=${{ github.event.inputs.kernel_version }}-${{ env.KERNEL_NAME }}
+            AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ github.event.inputs.kernel_version }}_palaziks-ShiftPorts.zip
+            FULL_VERSION=${{ github.event.inputs.kernel_version }}-palaziks-ShiftPorts
           
           zip -r ../$AK3_NAME ./*
           echo "ak3name=$AK3_NAME" >> $GITHUB_OUTPUT
@@ -978,6 +985,25 @@ jobs:
         with:
           name: ${{ steps.create_zip.outputs.ak3name }}
           path: ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
+
+      - name: 📝 Make ZRAM module
+        run: |
+          ZRAM_KO=$(find kernel_workspace/common/out -name "zram.ko" | head -1)
+          if [ -z "$ZRAM_KO" ]; then
+            echo "⚠️ zram.ko not found, skipping"
+            exit 0
+          fi
+          curl -L "https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/zram.zip" -o zram.zip
+          unzip -q zram.zip -d zram
+          find zram -name "zram.ko" -exec cp "$ZRAM_KO" {} \;
+          rm -f zram.zip
+          echo "✅ Done!"
+
+      - name: 📤 Upload zram.zip | 上传 zram.zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: zram-module
+          path: ./zram/*
 
       - name: 🚶‍♂️ Send Telegram Notification | 发送电报通知
         if: inputs.telegram_notify && always()
@@ -1237,26 +1263,26 @@ jobs:
             fi
           fi
 
-      - name: 📝 Make ZRAM module | 制作 ZRAM 模块
-        run: |
-          set -e
-          echo "📥 正在下载 zram.zip…"
-          curl -L "https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/zram.zip" -o "$GITHUB_WORKSPACE/zram.zip"
-          
-          echo "📦 正在解压…"
-          unzip -q "$GITHUB_WORKSPACE/zram.zip" -d "$GITHUB_WORKSPACE/zram"
-          
-          echo "🔁 正在替换 zram.ko…"
-          find "$GITHUB_WORKSPACE/zram" -name "zram.ko" -exec cp "./kernel_workspace/kernel_platform/common/out/drivers/block/zram/zram.ko" {} \;
-          rm -rf $GITHUB_WORKSPACE/zram.zip
-          
-          echo "✅ 完成！"
-          
-      - name: 📤 Upload zram.zip | 上传 zram.zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: zram-module
-          path: ./zram/*
+          # ── Upload ZRAM Module ────────────────────────────────────────────
+          if [ "$BUILD_STATUS" = "success" ]; then
+            ZRAM_ZIP="${{ github.workspace }}/zram_module.zip"
+            if [ -f "$ZRAM_ZIP" ]; then
+              Z_SIZE=$(du -sh "$ZRAM_ZIP" | cut -f1)
+              Z_NAME="zram_module.zip"
+              echo "Uploading: $Z_NAME ($Z_SIZE)"
+              Z_CAPTION=$(printf "📦 %s\n📏 %s\n🧩 ZRAM Module for Build #%s" "$Z_NAME" "$Z_SIZE" "$BUILD_NUM")
+              
+              curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+                -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                -F "document=@${ZRAM_ZIP}" \
+                -F "caption=${Z_CAPTION}" \
+                | python3 -c "
+          import json,sys
+          r=json.load(sys.stdin)
+          print('ZRAM upload: OK' if r.get('ok') else f'ZRAM upload ERROR: {r.get(\"description\")}')
+          " || echo "ZRAM upload failed"
+            fi
+          fi
 
   release:
     needs: build

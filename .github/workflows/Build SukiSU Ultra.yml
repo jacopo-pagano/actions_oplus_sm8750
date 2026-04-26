@@ -303,12 +303,18 @@ jobs:
 
       # ── FIX: Missing static key symbols for MANUAL_HOOK mode ────────────────
       - name: 🔧 Fix missing KSU static key symbols
-        working-directory: kernel_workspace/common/drivers/kernelsu
+        working-directory: kernel_workspace/common
         run: |
-          KSUD="ksud.c"
+          echo "Locating ksud.c..."
+          KSUD=$(find drivers/kernelsu -name "ksud.c" | head -1)
+          if [ -z "$KSUD" ]; then
+            echo "❌ ksud.c not found!"
+            find drivers/kernelsu -name "*.c" | head -20
+            exit 1
+          fi
+          echo "Found: $KSUD"
 
-          # Fix 1: define the key_false structs that are only extern'd under SUSFS+STATIC_KEY
-          # Insert definitions right after the extern block
+          # Fix 1: replace extern key_false declarations with real definitions
           if ! grep -q "STATIC_KEY_FALSE_INIT" "$KSUD"; then
             sed -i 's|extern struct static_key_false ksu_input_hook_key_false;|struct static_key_false ksu_input_hook_key_false = STATIC_KEY_FALSE_INIT;\nEXPORT_SYMBOL_GPL(ksu_input_hook_key_false);|' "$KSUD"
             sed -i 's|extern struct static_key_false ksu_init_rc_hook_key_false;|struct static_key_false ksu_init_rc_hook_key_false = STATIC_KEY_FALSE_INIT;\nEXPORT_SYMBOL_GPL(ksu_init_rc_hook_key_false);|' "$KSUD"
@@ -317,7 +323,7 @@ jobs:
             echo "key_false structs already defined, skipping"
           fi
 
-          # Fix 2: define ksu_is_* static keys which are missing entirely in MANUAL_HOOK mode
+          # Fix 2: append ksu_is_* static keys missing in MANUAL_HOOK mode
           if ! grep -q "DEFINE_STATIC_KEY_FALSE(ksu_is_input_hook_enabled)" "$KSUD"; then
             grep -q "jump_label.h" "$KSUD" || sed -i '1i #include <linux/jump_label.h>' "$KSUD"
             echo "" >> "$KSUD"

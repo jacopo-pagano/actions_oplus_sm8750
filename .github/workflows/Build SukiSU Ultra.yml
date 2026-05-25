@@ -381,6 +381,30 @@ jobs:
 
           echo "✅ SukiSU Ultra version configured"
 
+      - name: 🔧 Fix SUSFS selinux symbol linkage (builtin SukiSU)
+        if: github.event.inputs.SUSFS == 'true'
+        working-directory: kernel_workspace/common
+        run: |
+          RULES="KernelSU/kernel/selinux/rules.c"
+          SERVICES="security/selinux/ss/services.c"
+      
+          # 1. Define backup_sepolicy at the very top of rules.c (before the first #if block)
+          sed -i '1s/^/#ifdef CONFIG_KSU_SUSFS\nstruct selinux_policy *backup_sepolicy;\n#endif\n/' "$RULES"
+      
+          # 2. Assign backup_sepolicy = pol (the NEW active policy) right after it's installed
+          sed -i 's/rcu_assign_pointer(selinux_state\.policy, pol);/rcu_assign_pointer(selinux_state.policy, pol);\n#ifdef CONFIG_KSU_SUSFS\n    backup_sepolicy = pol;\n#endif/' "$RULES"
+      
+          # 3. Remove 'static' from the 3 functions in services.c so the extern declarations link
+          sed -i 's/^static int security_context_to_sid_with_policy(/int security_context_to_sid_with_policy(/' "$SERVICES"
+          sed -i 's/^static int security_sid_to_context_with_policy(/int security_sid_to_context_with_policy(/' "$SERVICES"
+          sed -i 's/^static void __nocfi security_compute_av_user_with_policy(/void __nocfi security_compute_av_user_with_policy(/' "$SERVICES"
+          sed -i 's/^static void security_compute_av_user_with_policy(/void security_compute_av_user_with_policy(/' "$SERVICES"
+      
+          echo "✅ Verifying rules.c:"
+          grep -n "backup_sepolicy" "$RULES"
+          echo "✅ Verifying services.c:"
+          grep -n "^int security_context_to_sid\|^int security_sid_to_context\|^void.*security_compute_av_user" "$SERVICES"
+
       - name: 🔧 Fix sulog USER_ARG_NULL compile error
         working-directory: kernel_workspace/common/drivers/kernelsu/sulog
         run: |

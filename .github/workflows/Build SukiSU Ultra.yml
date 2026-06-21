@@ -456,6 +456,7 @@ jobs:
           echo "📝 Copying patch files..."
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
+            cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./common/
             cp susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
           else
@@ -472,6 +473,7 @@ jobs:
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Applying SUSFS patch..."
             patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch
+            patch -p1 < 10_enable_susfs_for_ksu.patch
           fi
 
           echo "✅ Base patches applied"

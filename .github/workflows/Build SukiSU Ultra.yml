@@ -955,11 +955,11 @@ jobs:
         if: inputs.KPM
         run: |
           cd /dev/shm/kout/arch/arm64/boot
-          curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/download/0.13.0/patch_linux" -o patch_linux
+          cp ${{ github.workspace }}/kernel_workspace/SukiSU_patch/kpm/patch_linux ./
           chmod +x patch_linux
           ./patch_linux
           if [ -f oImage ]; then
-            rm -f Image
+            rm -f Image patch_linux
             mv oImage Image
             echo "✅ KPM patched"
           else

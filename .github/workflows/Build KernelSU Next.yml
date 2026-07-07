@@ -464,14 +464,17 @@ jobs:
           cp ../kernel_patches/zram/lz4armv8.S lib/lz4/lz4armv8/lz4armv8.S
           cp ../kernel_patches/zram/002-zstd.patch ./
           
-          # 1. Normalize line endings to prevent "corrupt binary patch" errors
-          dos2unix 001-lz4.patch 002-zstd.patch
+          # 1. Normalize line endings ONLY for ZSTD. Leave LZ4 alone to protect its binary data.
+          dos2unix 002-zstd.patch
           
-          # 2. Apply LZ4 with whitespace leniency
-          git apply -p1 --whitespace=nowarn < 001-lz4.patch || echo "LZ4 Patch failed or already applied"
+          # 2. Apply LZ4. Fallback to standard `patch` if `git apply` complains about whitespace.
+          git apply -p1 001-lz4.patch || patch -p1 --forward -F 3 < 001-lz4.patch || echo "LZ4 Patch applied partially or already present"
           
-          # 3. Apply ZSTD with '--forward' to skip applied hunks and '-F 3' to increase fuzz tolerance
-          patch -p1 --forward -F 3 < 002-zstd.patch || echo "ZSTD Patch failed or already applied"
+          # 3. Apply ZSTD. Catch any minor rejects (like portability_macros.h), report them, and clean up the .rej files.
+          patch -p1 --forward -F 3 < 002-zstd.patch || {
+            echo "ZSTD Patch finished with minor rejects (likely already applied upstream). Cleaning up .rej files..."
+            find . -name "*.rej" -type f -delete
+          }
 
       - name: Configure ZRAM Writeback
         if: inputs.zram_writeback

@@ -155,7 +155,6 @@ jobs:
       contents: read
     steps:
       - name: Detect kernel version from source
-        id: detect_version
         run: |
           # Placeholder - will be updated after source download
           echo "kernel_full_ver=6.6.x" >> $GITHUB_OUTPUT
@@ -372,6 +371,7 @@ jobs:
           find "${{ env.CCACHE_DIR }}" -type f -exec touch -t $(date -d "1 day ago" +%Y%m%d%H%M) {} + || true
               
       - name: Setup KernelSU-Next
+        id: ksu_version
         run: |
           cd kernel_workspace/kernel_platform/common
           echo "Setting up KernelSU-Next (dev branch)..."

@@ -918,12 +918,31 @@ jobs:
             echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
 
-      - name: Configure ADIOS IO
+      - name: Apply and Configure ADIOS IO
         if: inputs.adios_enable
         run: |
+          echo "Injecting ADIOS IO Scheduler source code..."
           cd kernel_workspace
-          echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # Clone your repository to access the uploaded ADIOS files
+          git clone --depth=1 -b $GITHUB_REF_NAME https://github.com/$GITHUB_REPOSITORY.git repo_files
+          
+          # Copy the ADIOS files into the kernel's block directory
+          cp repo_files/adios_src/adios.c common/block/adios.c
+          cp repo_files/adios_src/elevator.c common/block/elevator.c
+          cp repo_files/adios_src/Makefile common/block/Makefile
+          cp repo_files/adios_src/Kconfig.iosched common/block/Kconfig.iosched
+          
+          # Enable the ADIOS scheduler in the defconfig
+          cat >> common/arch/arm64/configs/gki_defconfig << 'EOF'
+          CONFIG_MQ_IOSCHED_ADIOS=y
+          CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y
+          EOF
+          
+          # Clean up the cloned repository files to save space
+          rm -rf repo_files
+          echo "✅ ADIOS IO Scheduler injected and enabled"
+
 
       - name: Configure Re-Kernel
         if: inputs.rekernel_enable

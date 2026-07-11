@@ -6,7 +6,7 @@
         <small>Stability-focused OGKI (aka OKI) 6.6 kernel for OnePlus 13 (SM8750)</small>
       </p>
       <p align="center" style="font-size:12px; margin-top: 0; margin-bottom: 20px;">
-        <i>SukiSU Ultra &amp; KageSU &amp; ReSukiSU &amp; KernelSU &amp; KernelSU Next</i>
+        <i>SukiSU Ultra &amp; ReSukiSU &amp; KernelSU &amp; KernelSU Next</i>
       </p>
     </summary>
   </ul>
@@ -30,7 +30,7 @@
 | **Kernel Version** | `Linux 6.6` (OGKI Android 15) |
 | **Android Version** | `15 VanillaIceCream` (compatible with later versions) |
 | **ROM Compatibility** | OxygenOS / ColorOS **or** AOSP — one build per ROM type ([see below](#-rom-compatibility)) |
-| **Root Solution** | SukiSU Ultra / KSU Next / KSU / KageSU (Multi-Manager) |
+| **Root Solution** | SukiSU Ultra / KSU Next / KSU / ReSukiSU (Multi-Manager) |
 | **Build System** | GitHub Actions CI/CD (optimized for ~5-6min builds) |
 
 ---
@@ -95,7 +95,7 @@
 - ✅ **Re-Kernel Support** – Enhanced app freezing via NoActive/Freezer *(optional)*
 
 ### 🧩 KernelSU Enhancements
-- ✅ **KPM Support** – Kernel Patch Module for SukiSU Ultra / ReSukiSU / KageSU *(optional)*
+- ✅ **KPM Support** – Kernel Patch Module for SukiSU Ultra *(optional)*
 - ✅ **Multi-Manager** – Compatible with multiple KSU variants
 
 ---

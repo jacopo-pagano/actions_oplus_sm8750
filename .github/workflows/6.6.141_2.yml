@@ -1,4 +1,4 @@
-name: 6.6.141 with KageSU OP13 Build
+name: KageSU OP13 Build
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-6.6.141

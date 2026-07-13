@@ -456,32 +456,16 @@ jobs:
       - name: Apply LZ4 1.10.0 & ZSTD 1.5.7 Patches
         if: inputs.lz4_enable
         run: |
-          echo "Transplanting f2fs from cctv18 and adding LZ4 & ZSTD patches..."
-          cd kernel_workspace
-          
-          # 1. Download cctv18's kernel tree to extract the ported f2fs
-          echo "Downloading cctv18 kernel tree..."
-          wget -q https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -O cctv18_tree.zip
-          unzip -q cctv18_tree.zip
-          
-          # 2. Delete the vanilla f2fs and replace it with the cctv18 ported f2fs
-          echo "Transplanting f2fs directory..."
-          rm -rf common/fs/f2fs
-          cp -r android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89/fs/f2fs common/fs/
-          
-          # Cleanup the extracted cctv18 tree to save disk space
-          rm -rf cctv18_tree.zip android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89
-          
-          # 3. Clone the cctv18 patch repo and copy the patches (using the flat path for .S)
-          git clone --depth=1 https://github.com/cctv18/oppo_oplus_realme_sm8750.git zram_src
-          cp ./zram_src/zram_patch/001-lz4.patch ./common/
-          cp ./zram_src/zram_patch/lz4armv8.S ./common/lib/
-          cp ./zram_src/zram_patch/002-zstd.patch ./common/
-          
-          # 4. Apply the patches
-          cd ./common
+          echo "Adding LZ4 & ZSTD patches..."
+          cd kernel_workspace/common
+          mkdir -p lib/lz4/lz4armv8
+          cp ../kernel_patches/zram/001-lz4.patch ./
+          cp ../kernel_patches/zram/lz4armv8.S lib/lz4/lz4armv8.S
+          cp ../kernel_patches/zram/lz4armv8.S lib/lz4/lz4armv8/lz4armv8.S
+          cp ../kernel_patches/zram/002-zstd.patch ./
           git apply -p1 < 001-lz4.patch || echo "LZ4 Patch failed or already applied"
           patch -p1 < 002-zstd.patch || echo "ZSTD Patch failed or already applied"
+
 
       - name: Apply LZ4KD Patch
         if: inputs.lz4kd_enable

@@ -826,7 +826,7 @@ jobs:
           CONFIG_LRNG_CONTINUOUS_COMPRESSION_ENABLED=y
           EOF
 
-            - name: Enable Wakelock Blocker
+      - name: Enable Wakelock Blocker
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |

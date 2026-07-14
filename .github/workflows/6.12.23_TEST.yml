@@ -346,7 +346,7 @@ jobs:
           export PATH="$WORKDIR/kernel_workspace/zyc-clang/bin:$WORKDIR/kernel_workspace/build-tools/linux-x86/bin:$PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
           export LIBCLANG_PATH="${LIBCLANG_PATH:-$WORKDIR/kernel_workspace/zyc-clang/lib}"
-	  export PAHOLE="$WORKDIR/kernel_workspace/build-tools/linux-x86/bin/pahole"
+          export PAHOLE="$WORKDIR/kernel_workspace/build-tools/linux-x86/bin/pahole"
           CLANG_DIR="$WORKDIR/kernel_workspace/zyc-clang/bin"
           echo "Clang: $($CLANG_DIR/clang --version | head -n 1)"
           echo "LLD:   $($CLANG_DIR/ld.lld --version | head -n 1)"

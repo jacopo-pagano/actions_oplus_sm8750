@@ -839,54 +839,76 @@ jobs:
           CONFIG_PM_WAKELOCKS_GC=y
           CONFIG_PM_WAKELOCKS_LIMIT=100
           EOF
-          
-          WAKELOCK_C="kernel/power/wakelock.c"
-          if [ -f "$WAKELOCK_C" ]; then
-            # 2. Inject the blocklist and evaluation function near the top of the file
-            # We insert it safely right after the standard local include
-            awk '
-            1;
-            /#include "power.h"/ {
-                print ""
-                print "/* palaziks: wakelock blocker list */"
-                print "static const char * const blocked_wakelocks[] = {"
-                print "    \"WLAN_pm_wlock\","
-                print "    \"IPA_WS\","
-                print "    \"qcom_rx_wakelock\","
-                print "    \"event0\","
-                print "};"
-                print ""
-                print "static bool is_wakelock_blocked(const char *name, size_t len) {"
-                print "    int i;"
-                print "    for (i = 0; i < ARRAY_SIZE(blocked_wakelocks); i++) {"
-                print "        if (strlen(blocked_wakelocks[i]) == len &&"
-                print "            !strncmp(name, blocked_wakelocks[i], len))"
-                print "            return true;"
-                print "    }"
-                print "    return false;"
-                print "}"
-            }
-            ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
 
-            # 3. Inject the blocking hook inside wakelock_lookup_add
-            awk '
-            /static struct wakelock \*wakelock_lookup_add/ {
-                print;
-                getline; print; # Prints the arguments line
-                getline; print; # Prints the opening curly brace "{"
-                print "\t/* palaziks: Check if wakelock is blocked */"
-                print "\tif (is_wakelock_blocked(name, len))"
-                print "\t\treturn ERR_PTR(-EPERM);"
-                next;
-            }
-            1
-            ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
-            
-            echo "Wakelock blocker successfully injected into $WAKELOCK_C"
-          else
+          WAKELOCK_C="kernel/power/wakelock.c"
+          if [ ! -f "$WAKELOCK_C" ]; then
             echo "Error: $WAKELOCK_C not found!"
             exit 1
           fi
+
+          cp "$WAKELOCK_C" "$WAKELOCK_C.bak"
+
+          # 2. Inject the blocklist and evaluation function near the top of the file
+          awk '
+          1;
+          /#include "power.h"/ {
+              print ""
+              print "/* palaziks: wakelock blocker list */"
+              print "static const char * const blocked_wakelocks[] = {"
+              print "    \"WLAN_pm_wlock\","
+              print "    \"IPA_WS\","
+              print "    \"qcom_rx_wakelock\","
+              print "    \"event0\","
+              print "};"
+              print ""
+              print "static bool is_wakelock_blocked(const char *name, size_t len) {"
+              print "    int i;"
+              print "    for (i = 0; i < ARRAY_SIZE(blocked_wakelocks); i++) {"
+              print "        if (strlen(blocked_wakelocks[i]) == len &&"
+              print "            !strncmp(name, blocked_wakelocks[i], len))"
+              print "            return true;"
+              print "    }"
+              print "    return false;"
+              print "}"
+          }
+          ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+
+          # 3. Inject the blocking hook inside wakelock_lookup_add
+          awk '
+          /static struct wakelock \*wakelock_lookup_add/ {
+              print;
+              getline; print; # Prints the arguments line
+              getline; print; # Prints the opening curly brace "{"
+              print "\t/* palaziks: Check if wakelock is blocked */"
+              print "\tif (is_wakelock_blocked(name, len))"
+              print "\t\treturn ERR_PTR(-EPERM);"
+              next;
+          }
+          1
+          ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+
+          # 4. Verify both injections actually landed before declaring success
+          FAILED=0
+          if ! grep -q "static const char \* const blocked_wakelocks\[\]" "$WAKELOCK_C"; then
+            echo "❌ Blocklist array was NOT inserted (no match for #include \"power.h\")"
+            FAILED=1
+          fi
+          if ! grep -q "is_wakelock_blocked(name, len)" "$WAKELOCK_C"; then
+            echo "❌ Blocking hook was NOT inserted into wakelock_lookup_add"
+            FAILED=1
+          fi
+
+          echo "── diff against original ──"
+          diff -u "$WAKELOCK_C.bak" "$WAKELOCK_C" || true
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "Wakelock blocker injection FAILED verification. Restoring original file."
+            mv "$WAKELOCK_C.bak" "$WAKELOCK_C"
+            exit 1
+          fi
+
+          rm -f "$WAKELOCK_C.bak"
+          echo "✅ Wakelock blocker verified: blocklist + hook both present in $WAKELOCK_C"
 
       - name: Configure BBR & Brutal
         run: |

@@ -576,6 +576,33 @@ jobs:
           echo "Applying WildKernels optimization patches..."
           PATCHES_DIR="../wildkernels_patches/common"
 
+          cat << 'EOF' | sed 's/^|//' > "$PATCHES_DIR/clear_page_16bytes_align.patch"
+          |commit 059262d116257e11fe35393d5655412df1131a76
+          |Author: Sultan Alsawaf <sultan@kerneltoast.com>
+          |Date:   Thu May 25 21:17:48 2023 -0700
+          |
+          |    arm64: Align clear_page() to 16 bytes
+          |    
+          |    With automatic zeroing of pages upon allocation enabled, time spent in
+          |    clear_page() is significant according to perf top. Since clear_page() is
+          |    used in loops, align it to 16 bytes, which significantly reduces CPU time
+          |    spent in clear_page()
+          |    
+          |    Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+          |
+          |diff --git a/arch/arm64/lib/clear_page.S b/arch/arm64/lib/clear_page.S
+          |--- a/arch/arm64/lib/clear_page.S
+          |+++ b/arch/arm64/lib/clear_page.S
+          |@@ -12,6 +12,7 @@
+          |  * Parameters:
+          |  * x0 - dest
+          |  */
+          |+ .p2align 4
+          | SYM_FUNC_START(__pi_clear_page)
+          |     mrs    x1, dczid_el0
+          |     tbnz    x1, #4, 2f    /* Branch if DC ZVA is prohibited */
+          EOF
+
           apply_patch() {
             local patch="$1"
             if [ -f "$PATCHES_DIR/$patch" ]; then
@@ -585,7 +612,7 @@ jobs:
               echo "⚠️ $patch not found, skipping"
             fi
           }
-
+          
           apply_patch "optimized_mem_operations.patch"
           apply_patch "file_struct_8bytes_align.patch"
           apply_patch "reduce_cache_pressure.patch"
@@ -611,7 +638,6 @@ jobs:
           apply_patch "silence_irq_cpu_logspam.patch"
           apply_patch "silence_system_logspam.patch"
           apply_patch "use_unlikely_wrap_cpufreq.patch"
-
           echo "✅ Optimization patches applied"
 
       # ── NEW: NTSync ──────────────────────────────────────────────────────────
@@ -807,22 +833,59 @@ jobs:
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |
+          # 1. Append kernel config limits
           cat >> arch/arm64/configs/gki_defconfig << 'EOF'
           CONFIG_PM_WAKELOCKS=y
           CONFIG_PM_WAKELOCKS_GC=y
           CONFIG_PM_WAKELOCKS_LIMIT=100
           EOF
+          
           WAKELOCK_C="kernel/power/wakelock.c"
           if [ -f "$WAKELOCK_C" ]; then
-            cat >> "$WAKELOCK_C" << 'WLEOF'
-          /* palaziks: wakelock blocker list */
-          static const char * const blocked_wakelocks[] = {
-              "WLAN_pm_wlock",
-              "IPA_WS",
-              "qcom_rx_wakelock",
-              "event0",
-          };
-          WLEOF
+            # 2. Inject the blocklist and evaluation function near the top of the file
+            # We insert it safely right after the standard local include
+            awk '
+            1;
+            /#include "power.h"/ {
+                print ""
+                print "/* palaziks: wakelock blocker list */"
+                print "static const char * const blocked_wakelocks[] = {"
+                print "    \"WLAN_pm_wlock\","
+                print "    \"IPA_WS\","
+                print "    \"qcom_rx_wakelock\","
+                print "    \"event0\","
+                print "};"
+                print ""
+                print "static bool is_wakelock_blocked(const char *name, size_t len) {"
+                print "    int i;"
+                print "    for (i = 0; i < ARRAY_SIZE(blocked_wakelocks); i++) {"
+                print "        if (strlen(blocked_wakelocks[i]) == len &&"
+                print "            !strncmp(name, blocked_wakelocks[i], len))"
+                print "            return true;"
+                print "    }"
+                print "    return false;"
+                print "}"
+            }
+            ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+
+            # 3. Inject the blocking hook inside wakelock_lookup_add
+            awk '
+            /static struct wakelock \*wakelock_lookup_add/ {
+                print;
+                getline; print; # Prints the arguments line
+                getline; print; # Prints the opening curly brace "{"
+                print "\t/* palaziks: Check if wakelock is blocked */"
+                print "\tif (is_wakelock_blocked(name, len))"
+                print "\t\treturn ERR_PTR(-EPERM);"
+                next;
+            }
+            1
+            ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+            
+            echo "Wakelock blocker successfully injected into $WAKELOCK_C"
+          else
+            echo "Error: $WAKELOCK_C not found!"
+            exit 1
           fi
 
       - name: Configure BBR & Brutal

@@ -833,82 +833,78 @@ jobs:
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |
-          # 1. Append kernel config limits
-          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
-          CONFIG_PM_WAKELOCKS=y
-          CONFIG_PM_WAKELOCKS_GC=y
-          CONFIG_PM_WAKELOCKS_LIMIT=100
-          EOF
-
-          WAKELOCK_C="kernel/power/wakelock.c"
-          if [ ! -f "$WAKELOCK_C" ]; then
-            echo "Error: $WAKELOCK_C not found!"
+          WAKEUP_C="drivers/base/power/wakeup.c"
+          if [ ! -f "$WAKEUP_C" ]; then
+            echo "Error: $WAKEUP_C not found!"
             exit 1
           fi
 
-          cp "$WAKELOCK_C" "$WAKELOCK_C.bak"
+          cp "$WAKEUP_C" "$WAKEUP_C.bak"
 
-          # 2. Inject the blocklist and evaluation function near the top of the file
+          # 1. Inject the blocklist and evaluation function near the top of the file
           awk '
           1;
           /#include "power.h"/ {
               print ""
-              print "/* palaziks: wakelock blocker list */"
-              print "static const char * const blocked_wakelocks[] = {"
+              print "#include <linux/string.h>"
+              print ""
+              print "/* palaziks: wakeup source blocker list */"
+              print "static const char * const blocked_wakeup_sources[] = {"
               print "    \"WLAN_pm_wlock\","
               print "    \"IPA_WS\","
               print "    \"qcom_rx_wakelock\","
               print "    \"event0\","
               print "};"
               print ""
-              print "static bool is_wakelock_blocked(const char *name, size_t len) {"
+              print "static bool is_wakeup_source_blocked(const char *name)"
+              print "{"
               print "    int i;"
-              print "    for (i = 0; i < ARRAY_SIZE(blocked_wakelocks); i++) {"
-              print "        if (strlen(blocked_wakelocks[i]) == len &&"
-              print "            !strncmp(name, blocked_wakelocks[i], len))"
+              print ""
+              print "    if (!name)"
+              print "        return false;"
+              print ""
+              print "    for (i = 0; i < ARRAY_SIZE(blocked_wakeup_sources); i++) {"
+              print "        if (!strcmp(name, blocked_wakeup_sources[i]))"
               print "            return true;"
               print "    }"
               print "    return false;"
               print "}"
           }
-          ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+          ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
 
-          # 3. Inject the blocking hook inside wakelock_lookup_add
+          # 2. Inject the blocking check right before ws->active = true in wakeup_source_activate()
           awk '
-          /static struct wakelock \*wakelock_lookup_add/ {
-              print;
-              getline; print; # Prints the arguments line
-              getline; print; # Prints the opening curly brace "{"
-              print "\t/* palaziks: Check if wakelock is blocked */"
-              print "\tif (is_wakelock_blocked(name, len))"
-              print "\t\treturn ERR_PTR(-EPERM);"
-              next;
+          /^\tws->active = true;$/ {
+              print "\t/* palaziks: Skip activation for blocked wakeup sources */"
+              print "\tif (is_wakeup_source_blocked(ws->name))"
+              print "\t\treturn;"
+              print ""
           }
           1
-          ' "$WAKELOCK_C" > tmp.c && mv tmp.c "$WAKELOCK_C"
+          ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
 
-          # 4. Verify both injections actually landed before declaring success
+          # 3. Verify both injections actually landed before declaring success
           FAILED=0
-          if ! grep -q "static const char \* const blocked_wakelocks\[\]" "$WAKELOCK_C"; then
+          if ! grep -q "static const char \* const blocked_wakeup_sources\[\]" "$WAKEUP_C"; then
             echo "❌ Blocklist array was NOT inserted (no match for #include \"power.h\")"
             FAILED=1
           fi
-          if ! grep -q "is_wakelock_blocked(name, len)" "$WAKELOCK_C"; then
-            echo "❌ Blocking hook was NOT inserted into wakelock_lookup_add"
+          if ! grep -q "is_wakeup_source_blocked(ws->name)" "$WAKEUP_C"; then
+            echo "❌ Blocking hook was NOT inserted into wakeup_source_activate"
             FAILED=1
           fi
 
           echo "── diff against original ──"
-          diff -u "$WAKELOCK_C.bak" "$WAKELOCK_C" || true
+          diff -u "$WAKEUP_C.bak" "$WAKEUP_C" || true
 
           if [ "$FAILED" -eq 1 ]; then
-            echo "Wakelock blocker injection FAILED verification. Restoring original file."
-            mv "$WAKELOCK_C.bak" "$WAKELOCK_C"
+            echo "Wakeup source blocker injection FAILED verification. Restoring original file."
+            mv "$WAKEUP_C.bak" "$WAKEUP_C"
             exit 1
           fi
 
-          rm -f "$WAKELOCK_C.bak"
-          echo "✅ Wakelock blocker verified: blocklist + hook both present in $WAKELOCK_C"
+          rm -f "$WAKEUP_C.bak"
+          echo "✅ Wakeup source blocker verified: blocklist + hook both present in $WAKEUP_C"
 
       - name: Configure BBR & Brutal
         run: |

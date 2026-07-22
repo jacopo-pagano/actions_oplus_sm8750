@@ -788,23 +788,76 @@ jobs:
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |
-          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
-          CONFIG_PM_WAKELOCKS=y
-          CONFIG_PM_WAKELOCKS_GC=y
-          CONFIG_PM_WAKELOCKS_LIMIT=100
-          EOF
-          WAKELOCK_C="kernel/power/wakelock.c"
-          if [ -f "$WAKELOCK_C" ]; then
-            cat >> "$WAKELOCK_C" << 'WLEOF'
-          /* palaziks: wakelock blocker list */
-          static const char * const blocked_wakelocks[] = {
-              "WLAN_pm_wlock",
-              "IPA_WS",
-              "qcom_rx_wakelock",
-              "event0",
-          };
-          WLEOF
+          WAKEUP_C="drivers/base/power/wakeup.c"
+          if [ ! -f "$WAKEUP_C" ]; then
+            echo "Error: $WAKEUP_C not found!"
+            exit 1
           fi
+          cp "$WAKEUP_C" "$WAKEUP_C.bak"
+      
+          # 1. Inject blocklist + helper after #include "power.h"
+          awk '
+          1;
+          /#include "power\.h"/ {
+              print ""
+              print "/* palaziks: wakeup source blocker */"
+              print "static const char * const blocked_wakeup_sources[] = {"
+              print "\t\"WLAN_pm_wlock\","
+              print "\t\"IPA_WS\","
+              print "\t\"qcom_rx_wakelock\","
+              print "};"
+              print ""
+              print "static bool is_wakeup_source_blocked(const char *name)"
+              print "{"
+              print "\tint i;"
+              print ""
+              print "\tif (!name)"
+              print "\t\treturn false;"
+              print ""
+              print "\tfor (i = 0; i < ARRAY_SIZE(blocked_wakeup_sources); i++) {"
+              print "\t\tif (!strcmp(name, blocked_wakeup_sources[i]))"
+              print "\t\t\treturn true;"
+              print "\t}"
+              print "\treturn false;"
+              print "}"
+          }
+          ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
+      
+          # 2. Inject blocking check in wakeup_source_activate()
+          #    Use escaped dots and match the tab-indented line precisely
+          awk '
+          /^\tws->active = true;$/ {
+              print "\t/* palaziks: block known-bad wakeup sources from holding suspend */"
+              print "\tif (is_wakeup_source_blocked(ws->name)) {"
+              print "\t\tws->expire_count++;"
+              print "\t\treturn;"
+              print "\t}"
+              print ""
+          }
+          1
+          ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
+      
+          # 3. Verify both injections landed
+          FAILED=0
+          if ! grep -q "blocked_wakeup_sources\[\]" "$WAKEUP_C"; then
+            echo "❌ Blocklist array NOT inserted"
+            FAILED=1
+          fi
+          if ! grep -q "is_wakeup_source_blocked(ws->name)" "$WAKEUP_C"; then
+            echo "❌ Blocking hook NOT inserted"
+            FAILED=1
+          fi
+      
+          echo "── diff ──"
+          diff -u "$WAKEUP_C.bak" "$WAKEUP_C" || true
+      
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Wakelock blocker injection FAILED. Restoring original."
+            mv "$WAKEUP_C.bak" "$WAKEUP_C"
+            exit 1
+          fi
+          rm -f "$WAKEUP_C.bak"
+          echo "✅ Wakelock blocker applied and verified"
 
       - name: Configure BBR & Brutal
         run: |

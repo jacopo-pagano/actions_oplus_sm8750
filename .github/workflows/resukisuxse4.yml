@@ -173,8 +173,6 @@ jobs:
 
           wait
 
-          # NOTE: ABI protection already removed in xkse4 source ("removed abi protected symbol" commit)
-          # NOTE: dirty suffix already handled in xkse4 source
           echo "Removing dirty suffix (safety)..."
           for f in common/scripts/setlocalversion; do
             [ -f "$f" ] && sed -i 's/ -dirty//g' "$f"
@@ -297,8 +295,8 @@ jobs:
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git &
           fi
-          # ── FIX ── mrcxlinux/kernel_patches kept for potential future patches,
-          # but EnablePOLLY.patch is NO LONGER applied (see comment below).
+          # ── FIX ── mrcxlinux/kernel_patches kept for potential future patches.
+          # EnablePOLLY.patch is NO LONGER applied (see note below).
           git clone --depth=1 https://github.com/mrcxlinux/kernel_patches.git &
           git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git &
           git clone --depth=1 https://github.com/palazik/kernel_patches.git wildkernels_patches &
@@ -316,17 +314,16 @@ jobs:
           #
           # The patch from mrcxlinux/kernel_patches targets stock GKI and adds
           # CONFIG_LLVM_POLLY to arch/Kconfig + Polly flags to the Makefile.
-          # The xkse4 source ALREADY has both of these built in:
-          #   - Makefile: ifdef CONFIG_LLVM_POLLY block with -mllvm -polly flags
+          # The xkse4 source ALREADY has both built in:
+          #   - Makefile: ifdef CONFIG_LLVM_POLLY block with all -mllvm -polly flags
           #   - Kconfig:  CONFIG_LLVM_POLLY option defined
-          # The patch fails with "patch does not apply" because xkse4 diverged
-          # at Makefile:849 and arch/Kconfig:851.
+          # The patch fails ("patch does not apply") because xkse4 diverged at
+          # Makefile:849 and arch/Kconfig:851.
           #
           # ZyCromerZ Clang 19 DOES include LLVMPolly.so (confirmed: clang-builder.sh
           # passes --projects "clang;compiler-rt;lld;polly;openmp").
-          # So CONFIG_LLVM_POLLY=y in the defconfig (set in "Configure Kernel Options")
-          # is sufficient — no patch needed.
-          echo "ℹ️  Polly: xkse4 source has native support + ZyC Clang includes LLVMPolly.so — no patch needed."
+          # CONFIG_LLVM_POLLY=y is set in "Configure Kernel Options" below.
+          echo "ℹ️  Polly: xkse4 source has native Makefile/Kconfig support + ZyC Clang includes LLVMPolly.so — no patch needed."
 
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Pre-patch fixups (fatalcoder android15-6.6 method)..."
@@ -355,23 +352,18 @@ jobs:
       - name: ⚙️ Configure Kernel Options
         run: |
           cd kernel_workspace
-          # xkse4 source uses xkse4_dodge_defconfig (NOT gki_defconfig)
           DEFCONFIG="./common/arch/arm64/configs/xkse4_dodge_defconfig"
 
           # ── KernelSU / ReSukiSU ──
           echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$DEFCONFIG"
-          # NOTE: LZ4K/LZ4KD/LZ4HC/842/ZSMALLOC already in xkse4_dodge_defconfig
 
           # ── FIX ── REMOVED: CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
           #
           # The xkse4 defconfig already has CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y (-O3).
           # Appending CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y (-O2) AFTER it causes the
-          # Kconfig parser to select the LAST choice option → downgrades to -O2.
-          # This silently discarded all -O3 optimizations (aggressive inlining,
-          # loop vectorization, loop unrolling) that the xkse4 maintainer intended.
-          #
+          # Kconfig choice parser to select the LAST option → downgrades to -O2.
           # The -O level is now controlled solely by the source defconfig (-O3)
           # and reinforced in KCFLAGS below.
 
@@ -482,11 +474,6 @@ jobs:
       - name: Prepare CPU Optimizations (Oryon SM8750)
         if: inputs.cpu_opt
         run: |
-          # xkse4 source already sets in Makefile:
-          #   KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
-          # and xkse4_dodge_defconfig already has the maintainer's intended
-          # HZ, PREEMPT, NO_HZ, ARCH_QCOM, ERRATUM settings.
-          #
           # ── FIX ── Simplified EXTRA_CFLAGS to ONLY -mcpu=oryon-1.
           #
           # -fno-strict-aliasing and -fno-delete-null-pointer-checks are ALREADY
@@ -504,9 +491,6 @@ jobs:
           #       SHA3, SM4, RNG, BF16, FP16) are identical on SM8750's Oryon-M.
           #       The scheduling model over-estimates pipeline width (~14 vs ~10)
           #       but is still far better than the generic Cortex-A510 fallback.
-          #
-          # We do NOT touch HZ/PREEMPT/NO_HZ/ARCH_QCOM/ERRATUM in defconfig —
-          # those are already set by the xkse4 maintainer to their preferred values.
           echo "EXTRA_CFLAGS=-mcpu=oryon-1" >> $GITHUB_ENV
           echo "✅ Oryon -mcpu=oryon-1 flag prepared (overrides source -march=armv9.1-a at compile time)."
 
@@ -535,6 +519,16 @@ jobs:
           echo "Applying WildKernels optimization patches..."
           echo "NOTE: Some may already be in xkse4 source — conflicts will be skipped."
           PATCHES_DIR="../wildkernels_patches/common"
+
+          # ── NOTE ── The following 4 patches are KNOWN to fail on xkse4 source
+          # because xkse4 already has the same or better optimization:
+          #
+          #   clear_page_16bytes_align.patch → xkse4 commit 09ea441 (same patch, same author kerneltoast)
+          #   int_sqrt.patch                 → xkse4 commits b0a6782 + 2a929cc (3.5× faster CLZ/LUT/Newton rewrite)
+          #   minimise_wakeup_time.patch     → xkse4 commit 1a704de (same optimization by xNombre)
+          #   reduce_freeze_timeout.patch    → xkse4/OnePlus base: 500ms timeout + exponential backoff (vs stock 20s)
+          #
+          # They are kept in the list for documentation; --forward skips them gracefully.
 
           cat << 'EOF' | sed 's/^|//' > "$PATCHES_DIR/clear_page_16bytes_align.patch"
           |commit 059262d116257e11fe35393d5655412df1131a76
@@ -699,10 +693,6 @@ jobs:
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |
-          # NOTE: xkse4 source already has Boeffla Wakelock Blocker (sysfs-based, userspace configurable).
-          # This step adds a COMPLEMENTARY hardcoded blocklist at a lower level (wakeup.c)
-          # that blocks specific sources BEFORE they can hold or abort suspend.
-          # The two work together: Boeffla for user-configurable blocking, this for kernel-level hard blocks.
           WAKEUP_C="drivers/base/power/wakeup.c"
           if [ ! -f "$WAKEUP_C" ]; then
             echo "Error: $WAKEUP_C not found!"
@@ -791,6 +781,9 @@ jobs:
         run: |
           cd kernel_workspace
           DEFCONFIG="./common/arch/arm64/configs/xkse4_dodge_defconfig"
+          # NOTE: xkse4 source already has CONFIG_LTO_CLANG_THIN=y in defconfig.
+          # For "thin" (default), the appended line is redundant but harmless.
+          # For "none"/"full", the appended line overrides via Kconfig choice last-wins.
           if [[ "${{ github.event.inputs.lto_type }}" == "none" ]]; then
             echo "CONFIG_LTO_CLANG_NONE=y" >> "$DEFCONFIG"
           elif [[ "${{ github.event.inputs.lto_type }}" == "full" ]]; then
@@ -842,8 +835,12 @@ jobs:
 
           cd kernel_workspace/common
 
+          # ── FIX ── ThinLTO jobs: use ALL cores instead of half.
+          # On a 2-vCPU runner, $(($(nproc --all) / 2)) = 1, making the
+          # ThinLTO backend link single-threaded (the slowest part of the build).
+          # Using $(nproc --all) = 2 doubles ThinLTO link throughput.
           echo '#!/bin/bash' > ld-wrapper
-          echo 'ld.lld "$@" --thinlto-cache-dir=$GITHUB_WORKSPACE/ldcache_6.6.142 --thinlto-jobs=$(($(nproc --all) / 2))' >> ld-wrapper
+          echo 'ld.lld "$@" --thinlto-cache-dir=$GITHUB_WORKSPACE/ldcache_6.6.142 --thinlto-jobs=$(nproc --all)' >> ld-wrapper
           chmod +x ld-wrapper
 
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so || true
@@ -854,26 +851,17 @@ jobs:
           export FAKETIME="@2025-05-25 13:00:00"
 
           # ── FIX ── Changed PRELOAD_LIBS → LD_PRELOAD.
-          #
-          # PRELOAD_LIBS is not a standard environment variable and was never
-          # consumed by anything. LD_PRELOAD is the actual mechanism that causes
-          # the dynamic linker to load libfakestat.so and libfaketimeMT.so into
-          # every child process (including clang), enabling reproducible-build
-          # timestamp faking.
+          # PRELOAD_LIBS is not a standard env var and was never consumed.
+          # LD_PRELOAD is the actual mechanism that loads the .so files.
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
 
           # ── FIX ── Changed KCFLAGS from -O2 to -O3.
-          #
-          # The xkse4 defconfig sets CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y,
-          # which puts -O3 in KBUILD_CFLAGS. The old KCFLAGS had -O2, which
-          # appeared AFTER -O3 on the command line (KCFLAGS is appended last)
-          # and silently downgraded the entire kernel to -O2.
-          #
+          # The xkse4 defconfig sets CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y (-O3).
+          # The old -O2 in KCFLAGS appeared AFTER -O3 on the command line and
+          # silently downgraded the entire kernel to -O2.
           # Now KCFLAGS uses -O3 to match the source's intended optimization level.
-          # The -Wno-* flags are kept to suppress non-fatal warnings from
-          # out-of-tree patches (SuSFS, BBRv3, BORE, etc.).
 
-          # defconfig pass — using xkse4_dodge_defconfig
+          # defconfig pass
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
@@ -881,11 +869,13 @@ jobs:
             xkse4_dodge_defconfig
 
           # Image build — EXTRA_CFLAGS includes -mcpu=oryon-1 which overrides source's -march=armv9.1-a
+          # Progress filter prints a marker every 500 compiled files so the log shows the build is alive.
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
             KCFLAGS="-O3 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option ${EXTRA_CFLAGS:-} ${MAP}" \
-            Image
+            Image 2>&1 | tee /tmp/kbuild.log | \
+            awk '/^  CC|^  LD|^  AR/ { count++; if (count % 500 == 0) printf "── %d files compiled ──\n", count } 1'
 
           echo "Kernel Compilation Complete!"
           ccache -c
@@ -1159,7 +1149,6 @@ jobs:
               -d chat_id="$TELEGRAM_CHAT_ID" \
               -d text="$CAPTION" \
               -d parse_mode="HTML"
-          fi
 
   release:
     needs: build

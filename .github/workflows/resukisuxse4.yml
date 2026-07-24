@@ -529,6 +529,7 @@ jobs:
       apply_patch "silence_system_logspam.patch"
 
       echo "✅ Optimization patches applied (15/25 — 10 skipped, already in xkse4 source)"
+
       - name: Add Droidspaces Support
         if: inputs.droidspaces_enable
         working-directory: kernel_workspace/common

@@ -1,16 +1,12 @@
-name: ReSukiSU OP13 Build
-
+name: ReSukiSU OP13 Build (xkse4)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-6.6.140
+  group: ${{ github.workflow }}-${{ github.ref }}-6.6.142
   cancel-in-progress: true
-
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
-  KERNEL_NAME: 'android15-8-gb1f8a9754a33-sm8750_b_16.0.0_oneplus_13'
-  CCACHE_KEY: ccache-neov4-6.6.140
-
+  CCACHE_KEY: ccache-neov4-6.6.142-xkse4
 on:
   workflow_dispatch:
     inputs:
@@ -19,32 +15,13 @@ on:
         required: true
         type: boolean
         default: true
-      lz4_enable:
-        description: 'Install LZ4 1.10.0 + ZSTD 1.5.7 Patch'
-        required: true
-        type: boolean
-        default: true
-      lz4kd_enable:
-        description: 'Install LZ4KD Patch (ZRAM optimization)'
+      bore_enable:
+        description: 'Enable BORE Scheduler (Burst-Oriented Response Enhancer)'
         required: true
         type: boolean
         default: false
-      bbr_enable:
-        description: "Enable TCP BBR/Brutal (false=off, true=add, default=set as default)"
-        required: true
-        type: choice
-        default: 'true'
-        options:
-          - 'false'
-          - 'true'
-          - 'default'
-      adios_enable:
-        description: 'Enable ADIOS IO Scheduler (Improves IO read/write performance)'
-        required: true
-        type: boolean
-        default: true
       rekernel_enable:
-        description: 'Enable Re-Kernel Support (Enhances app freezing via NoActive/Freezer)'
+        description: 'Enable Re-Kernel Support (was removed from xkse4 source, re-add)'
         required: true
         type: boolean
         default: false
@@ -67,58 +44,28 @@ on:
         required: true
         type: boolean
         default: true
-      bore_enable:
-        description: 'Enable BORE Scheduler (Burst-Oriented Response Enhancer, off by default)'
-        required: true
-        type: boolean
-        default: false
-      zram_writeback:
-        description: 'Enable ZRAM Writeback (better memory management)'
-        required: true
-        type: boolean
-        default: false
-      schedutil_opt:
-        description: 'Enable SchedUtil optimizations (better CPU governor)'
-        required: true
-        type: boolean
-        default: false
-      cpu_opt:
-        description: 'CPU Optimizations (Oryon MCPU tuning for SM8750)'
+      bbrv3_enable:
+        description: 'Enable BBRv3 (was reverted from xkse4 source, re-apply)'
         required: true
         type: boolean
         default: true
-      f2fs_opt:
-        description: 'F2FS Optimizations (better flash storage performance)'
-        required: true
-        type: boolean
-        default: false
-      wireguard:
-        description: 'Enable WireGuard VPN support'
-        required: true
-        type: boolean
-        default: true
-      netfilter_full:
-        description: 'Full Netfilter (conntrack, NAT, hashlimit)'
-        required: true
-        type: boolean
-        default: false
       lrng_enable:
         description: 'Enable LRNG v59 (better entropy for crypto/gaming)'
         required: true
         type: boolean
         default: false
+      cpu_opt:
+        description: 'Oryon -mcpu=oryon-1 tuning (overrides source -march=armv9.1-a with microarch-specific scheduling)'
+        required: true
+        type: boolean
+        default: true
       wakelock_blocker:
-        description: 'Enable Wakelock Blocker (better idle battery drain)'
+        description: 'Enable custom Wakelock Blocker (hardcoded blocklist in wakeup.c, complements Boeffla in source)'
         required: true
         type: boolean
         default: true
       github_release:
         description: 'Create GitHub Release'
-        required: true
-        type: boolean
-        default: false
-      ntsync_enable:
-        description: 'Enable NTSync (low-latency NT sync primitives, great for gaming/Wine)'
         required: true
         type: boolean
         default: false
@@ -138,11 +85,10 @@ on:
         type: boolean
         default: false
       mem_opt_patches:
-        description: 'Enable memory/scheduler optimization patches (from WildKernels)'
+        description: 'Enable extra memory/scheduler optimization patches (WildKernels)'
         required: true
         type: boolean
         default: true
-        
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -183,23 +129,18 @@ jobs:
           sudo mv /opt/ghc /opt/ghc_trash 2>/dev/null || true
           sudo mv /usr/lib/jvm /usr/lib/jvm_trash 2>/dev/null || true
           (sudo nice -n 19 ionice -c 3 rm -rf /usr/share/dotnet_trash /usr/local/lib/android_trash /opt/ghc_trash /usr/lib/jvm_trash) &
-
           rm -rf kernel_workspace/common kernel_workspace/out 2>/dev/null || true
           mkdir -p kernel_workspace/zyc-clang kernel_workspace/build-tools
           cd kernel_workspace
-
-          # apt — stripped to bare minimum, no purge/man-db waste
           sudo apt-get install -y --no-install-recommends -o Dpkg::Use-Pty=0 \
             libelf-dev dos2unix pahole cmake &
-
-          # Source clone
-          echo "Cloning source repository..."
+          # ── Source: xkse4/android_kernel_common_oneplus_sm8750 ──
+          echo "Cloning xkse4 source repository..."
           curl -L https://github.com/xkse4/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_b_16.0.0_oneplus_13.zip \
             -o common.zip &&
           unzip -q common.zip &&
           mv android_kernel_common_oneplus_sm8750-* common &&
           rm -f common.zip &
-
           # Clang — only download if cache missed
           if [ "${{ steps.clang-cache.outputs.cache-hit }}" != "true" ]; then
             echo "Cache miss — downloading ZyCromerZ Clang 19..."
@@ -212,7 +153,6 @@ jobs:
           else
             echo "Clang restored from cache, skipping download."
           fi &
-
           # build-tools — only clone if cache missed
           if [ "${{ steps.buildtools-cache.outputs.cache-hit }}" != "true" ]; then
             echo "Cache miss — cloning build-tools..."
@@ -221,16 +161,13 @@ jobs:
           else
             echo "build-tools restored from cache, skipping clone."
           fi &
-
           wait
-
-          echo "Removing ABI protection & dirty suffix..."
-          rm common/android/abi_gki_protected_exports_* || true
+          # NOTE: ABI protection already removed in xkse4 source ("removed abi protected symbol" commit)
+          # NOTE: dirty suffix already handled in xkse4 source
+          echo "Removing dirty suffix (safety)..."
           for f in common/scripts/setlocalversion; do
-            sed -i 's/ -dirty//g' "$f"
-            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
+            [ -f "$f" ] && sed -i 's/ -dirty//g' "$f"
           done
-
           echo "Source and tools initialized successfully!"
 
       - name: Cache ccache-ECS binary
@@ -267,13 +204,13 @@ jobs:
 
       - name: Configure CCache Directory
         run: |
-          echo "CCACHE_DIR=$HOME/.ccache_6.6.140" >> $GITHUB_ENV
-          echo "LDCACHE_DIR=$GITHUB_WORKSPACE/ldcache_6.6.140" >> $GITHUB_ENV
-          mkdir -p $GITHUB_WORKSPACE/ldcache_6.6.140
+          echo "CCACHE_DIR=$HOME/.ccache_6.6.142" >> $GITHUB_ENV
+          echo "LDCACHE_DIR=$GITHUB_WORKSPACE/ldcache_6.6.142" >> $GITHUB_ENV
+          mkdir -p $GITHUB_WORKSPACE/ldcache_6.6.142
           echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
           echo "Current Disk Space:"
           df -h
-          echo "Current Build Kernel Version: 6.6.140"
+          echo "Current Build Kernel Version: 6.6.142 (xkse4 source)"
 
       - name: Restore CCache
         uses: actions/cache/restore@v4
@@ -304,11 +241,9 @@ jobs:
             echo "Local cache loaded successfully, skipping public cache pull!"
             exit 0
           fi
-          
           echo "Cache miss, attempting to pull public ccache..."
           mkdir -p ${{ env.CCACHE_DIR }}
-          FILE_NAME="ccache-6.6.140.tar.zst"
-          
+          FILE_NAME="ccache-6.6.142.tar.zst"
           if gh release download -p "$FILE_NAME" -R cctv18/public_ccache; then
             echo "Successfully downloaded $FILE_NAME, extracting..."
             tar -I zstd -xf "$FILE_NAME" -C ${{ env.CCACHE_DIR }}
@@ -316,12 +251,11 @@ jobs:
           else
             echo "Public ccache not found, proceeding with full clean build..."
           fi
-      
+
       - name: Init and Config CCache
         run: |
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           mkdir -p "$CCACHE_DIR"
-
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -o compression=true
           ccache -o compiler_check=none
@@ -330,13 +264,11 @@ jobs:
           ccache -o depend_mode=false
           ccache -o base_dir="${{ github.workspace }}"
           ccache -o sloppiness=file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros,locale
-
           echo "Initial CCache status:"
           ccache -s
-
           echo "Updating atime to achieve cache eviction..."
           find "${{ env.CCACHE_DIR }}" -type f -exec touch -t $(date -d "1 day ago" +%Y%m%d%H%M) {} + || true
-              
+
       - name: ⚡ Setup ReSukiSU
         run: |
           cd kernel_workspace/common
@@ -358,44 +290,32 @@ jobs:
           git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git &
           git clone --depth=1 https://github.com/palazik/kernel_patches.git wildkernels_patches &
           wait
-
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
             cp susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-            # NO 10_ — SukiSU/ReSukiSU have SUSFS KSU-side integration in-source.
-            # (fatalcoder's production OnePlus v2.2.0 build applies 50_ only.)
           fi
-
           cd ./common
           cp ../kernel_patches/common/EnablePOLLY.patch ./
           git apply -p1 < EnablePOLLY.patch || true
-
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Pre-patch fixups (fatalcoder android15-6.6 method)..."
-            # nr_subpages
             if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
               sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
                      -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
             fi
-            # base.c dma-buf
             if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
               sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
             fi
-            # memory.c zswap
             if ! grep -qxF '#include <linux/zswap.h>' ./mm/memory.c; then
               sed -i '/#include <linux\/sched\/sysctl\.h>/a #include <linux\/zswap.h>' ./mm/memory.c
             fi
-            # task_mmu last_vma_end: expand ONLY if unbraced (your tree is already braced → skipped)
             if grep -qF 'if (vma->vm_end > last_vma_end)' ./fs/proc/task_mmu.c \
                && ! grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
               perl -i -0pe 's/\t\t\tif \(vma->vm_end > last_vma_end\)\n\t\t\t\tsmap_gather_stats\(vma, &mss, last_vma_end\);/\t\t\tif (vma->vm_end > last_vma_end) {\n\t\t\t\tsmap_gather_stats(vma, \&mss, last_vma_end);\n\t\t\t\tlast_vma_end = vma->vm_end;\n\t\t\t}/' ./fs/proc/task_mmu.c
             fi
-
-            echo "📦 Applying 50_ with --forward (by-design rejects skip cleanly)..."
+            echo "📦 Applying 50_ with --forward..."
             patch -p1 --forward < 50_add_susfs_in_gki-android15-6.6.patch || true
-
-            # Verify the SUS_MAP guard actually landed (real correctness check, not error-ignoring)
             grep -q "SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))" fs/proc/task_mmu.c \
               || { echo "❌ SUS_MAP guard missing — real failure"; exit 1; }
             echo "✅ SUSFS applied (fatalcoder method)"
@@ -405,30 +325,20 @@ jobs:
       - name: ⚙️ Configure Kernel Options
         run: |
           cd kernel_workspace
-          DEFCONFIG="./common/arch/arm64/configs/defconfig"
+          # xkse4 source uses xkse4_dodge_defconfig (NOT gki_defconfig)
+          DEFCONFIG="./common/arch/arm64/configs/xkse4_dodge_defconfig"
+          # ── KernelSU / ReSukiSU ──
           echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$DEFCONFIG"
-      
-          if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
-            echo "CONFIG_ZSMALLOC=y" >> "$DEFCONFIG"
-            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$DEFCONFIG"
-            echo "CONFIG_CRYPTO_LZ4K=y" >> "$DEFCONFIG"
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$DEFCONFIG"
-            echo "CONFIG_CRYPTO_842=y" >> "$DEFCONFIG"
-          fi
-      
+          # NOTE: LZ4K/LZ4KD/LZ4HC/842/ZSMALLOC already in xkse4_dodge_defconfig
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$DEFCONFIG"
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> "$DEFCONFIG"
-      
           echo "CONFIG_LLVM_POLLY=y" >> "$DEFCONFIG"
           echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$DEFCONFIG"
-      
-          # ReSukiSU custom version name (@palaziks) via its format-string config:
           echo 'CONFIG_KSU_FULL_NAME_FORMAT="v%KSU_VERSION%-%COMMIT_SHA%@palaziks"' >> "$DEFCONFIG"
-      
-          # SUSFS on => ReSukiSU auto-selects SuSFS Inline hook. Do NOT set CONFIG_KSU_MANUAL_HOOK.
+          # ── SUSFS ──
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Enabling SUSFS features..."
             echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
@@ -443,39 +353,56 @@ jobs:
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$DEFCONFIG"
           fi
 
-      - name: Apply LZ4 1.10.0 & ZSTD 1.5.7 Patches
-        if: inputs.lz4_enable
-        run: |
-          echo "Adding LZ4 & ZSTD patches..."
-          cd kernel_workspace/common
-          mkdir -p lib/lz4/lz4armv8
-          cp ../kernel_patches/zram/001-lz4.patch ./
-          cp ../kernel_patches/zram/lz4armv8.S lib/lz4/lz4armv8.S
-          cp ../kernel_patches/zram/lz4armv8.S lib/lz4/lz4armv8/lz4armv8.S
-          cp ../kernel_patches/zram/002-zstd.patch ./
-          git apply -p1 < 001-lz4.patch || echo "LZ4 Patch failed or already applied"
-          patch -p1 < 002-zstd.patch || echo "ZSTD Patch failed or already applied"
-
-      - name: Apply LZ4KD Patch
-        if: inputs.lz4kd_enable
-        run: |
-          echo "Adding LZ4KD patch..."
-          cd kernel_workspace/common
-          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
-          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./lib
-          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
-          cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
-          patch -p1 -F 3 < lz4kd.patch || true
-
-      - name: Configure ZRAM Writeback
-        if: inputs.zram_writeback
-        working-directory: kernel_workspace
-        run: |
-          echo "Enabling ZRAM Writeback support..."
-          cat >> common/arch/arm64/configs/defconfig << 'EOF'
-          CONFIG_ZRAM_WRITEBACK=y
-          CONFIG_ZRAM_MEMORY_TRACKING=y
-          EOF
+      # ──────────────────────────────────────────────────────────────────────────
+      # REMOVED STEPS (already implemented in xkse4 source):
+      #
+      # ✗ Apply LZ4 1.10.0 & ZSTD 1.5.7 Patches
+      #   → Source commit 5bd8d81: "Update to lz4 1.10.0 & zstd 1.5.7"
+      #   → lib/lz4/lz4armv8/ already present
+      #
+      # ✗ Apply LZ4KD Patch
+      #   → Source has: "crypto: add LZ4KD compression support for zram"
+      #   → "crypto: add Oplus LZ4K compression support"
+      #   → "zram: optimize LZ4K and LZ4KD hot paths"
+      #   → CONFIG_CRYPTO_LZ4KD=y, CONFIG_ZRAM_DEF_COMP_LZ4KD=y in defconfig
+      #
+      # ✗ Configure ZRAM Writeback
+      #   → Source has: "zram: serialize backing writeback requests"
+      #   → "zram: harden batched backing writeback"
+      #   → CONFIG_ZRAM_WRITEBACK=y, CONFIG_ZRAM_WRITEBACK_BATCH=y in defconfig
+      #
+      # ✗ Configure SchedUtil Optimizations
+      #   → Source has: "cpufreq/sched: Explicitly synchronize limits_changed flag"
+      #   → "defconfig: Set high-frequency scheduler tick"
+      #
+      # ✗ F2FS Optimizations
+      #   → CONFIG_F2FS_FS=y, CONFIG_F2FS_FS_COMPRESSION=y already in defconfig
+      #   → "f2fs: restore normal GC thread scheduling policy"
+      #
+      # ✗ Enable WireGuard
+      #   → CONFIG_WIREGUARD=y already in defconfig
+      #
+      # ✗ Enable Full Netfilter
+      #   → NF_CONNTRACK, NF_NAT, XT_MATCH_HASHLIMIT, XT_MATCH_CONNTRACK,
+      #     XT_MATCH_CONNLIMIT, XT_MATCH_STATE, IP_NF_NAT, etc. all in defconfig
+      #
+      # ✗ Apply NTSync Patch
+      #   → CONFIG_NTSYNC=y already in defconfig
+      #   → "ntsync: Honour caller's time namespace for absolute MONOTONIC timeouts"
+      #
+      # ✗ Configure BBR & Brutal
+      #   → CONFIG_TCP_CONG_BBR=y, CONFIG_TCP_CONG_BRUTAL=y, CONFIG_TCP_CONG_CUBIC=y,
+      #     CONFIG_TCP_CONG_NV=y, CONFIG_TCP_CONG_C2TCP=y, CONFIG_TCP_CONG_ROCCET=y,
+      #     CONFIG_DEFAULT_TCP_CONG="bbr", CONFIG_NET_SCH_FQ=y all in defconfig
+      #
+      # ✗ Configure ADIOS IO
+      #   → "Make ADIOS 3.2 compatible with 6.6 kernel"
+      #   → "block: update ADIOS to 3.2.0"
+      #   → CONFIG_MQ_IOSCHED_ADIOS=y, CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y in defconfig
+      #
+      # ✗ ABI protection removal
+      #   → Source commit: "removed abi protected symbol"
+      # ──────────────────────────────────────────────────────────────────────────
 
       - name: ⚙️ Apply Fengchi (HMBIRD) SCHED Patch
         if: inputs.fengchi
@@ -499,42 +426,30 @@ jobs:
               echo "✅ OGKI to GKI patch applied!"
             fi
           fi
-          cat >> arch/arm64/configs/defconfig << 'EOF'
+          cat >> arch/arm64/configs/xkse4_dodge_defconfig << 'EOF'
           CONFIG_SCHED_CLASS_EXT=y
           CONFIG_OPLUS_FEATURE_HMBIRD_BOOST=y
           CONFIG_OPLUS_FEATURE_HMBIRD_SCHED=y
           EOF
 
-      - name: Configure SchedUtil Optimizations
-        if: inputs.schedutil_opt
-        working-directory: kernel_workspace
-        run: |
-          cat >> common/arch/arm64/configs/defconfig << 'EOF'
-          CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
-          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-          EOF
-          SU_C="common/kernel/sched/cpufreq_schedutil.c"
-          if [ -f "$SU_C" ]; then
-            sed -i 's/LATENCY_MULTIPLIER\s*=\s*1000/LATENCY_MULTIPLIER = 1000/' "$SU_C" 2>/dev/null || true
-          fi
-
       - name: Prepare CPU Optimizations (Oryon SM8750)
         if: inputs.cpu_opt
         run: |
-          if [[ "${{ github.event.inputs.clang_version }}" == "clang18" ]]; then
-            echo "EXTRA_CFLAGS=-march=armv9-a+crypto+dotprod" >> $GITHUB_ENV
-          else
-            echo "EXTRA_CFLAGS=-mcpu=oryon-1 -fno-strict-aliasing -fno-delete-null-pointer-checks" >> $GITHUB_ENV
-          fi
-          cd kernel_workspace/common
-          cat >> arch/arm64/configs/defconfig << 'EOF'
-          CONFIG_ARM64_ERRATUM_2658417=y
-          CONFIG_ARCH_QCOM=y
-          CONFIG_HZ_300=y
-          CONFIG_PREEMPT=y
-          CONFIG_NO_HZ_IDLE=y
-          EOF
-          echo "✅ Oryon flags prepared."
+          # xkse4 source already sets in Makefile:
+          #   KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
+          # and xkse4_dodge_defconfig already has the maintainer's intended
+          # HZ, PREEMPT, NO_HZ, ARCH_QCOM, ERRATUM settings.
+          #
+          # We ONLY override the compiler flag via EXTRA_CFLAGS:
+          #   -mcpu=oryon-1  → Oryon-specific instruction scheduling & pipeline
+          #                     tuning (supersedes -march in Clang)
+          #   -fno-strict-aliasing → safety (kernel code relies on type punning)
+          #   -fno-delete-null-pointer-checks → safety (kernel null checks)
+          #
+          # We do NOT touch HZ/PREEMPT/NO_HZ/ARCH_QCOM/ERRATUM in defconfig —
+          # those are already set by the xkse4 maintainer to their preferred values.
+          echo "EXTRA_CFLAGS=-mcpu=oryon-1 -fno-strict-aliasing -fno-delete-null-pointer-checks" >> $GITHUB_ENV
+          echo "✅ Oryon -mcpu=oryon-1 flags prepared (overrides source -march=armv9.1-a at compile time)."
 
       - name: Apply Unicode Bypass Fix
         working-directory: kernel_workspace/common
@@ -548,20 +463,19 @@ jobs:
         if: inputs.bore_enable
         working-directory: kernel_workspace/common
         run: |
-          echo "CONFIG_SCHED_BORE=y" >> arch/arm64/configs/defconfig
+          echo "CONFIG_SCHED_BORE=y" >> arch/arm64/configs/xkse4_dodge_defconfig
           BORE_URL="https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/patches/bore.patch"
           wget -qO /tmp/bore.patch "$BORE_URL"
           patch -p1 -F 3 < /tmp/bore.patch
           echo "✅ BORE scheduler applied"
 
-      # ── NEW: Memory & Scheduler Optimization Patches (WildKernels) ───────────
       - name: Apply Memory & Scheduler Optimization Patches
         if: inputs.mem_opt_patches
         working-directory: kernel_workspace/common
         run: |
           echo "Applying WildKernels optimization patches..."
+          echo "NOTE: Some may already be in xkse4 source — conflicts will be skipped."
           PATCHES_DIR="../wildkernels_patches/common"
-
           cat << 'EOF' | sed 's/^|//' > "$PATCHES_DIR/clear_page_16bytes_align.patch"
           |commit 059262d116257e11fe35393d5655412df1131a76
           |Author: Sultan Alsawaf <sultan@kerneltoast.com>
@@ -588,17 +502,15 @@ jobs:
           |     mrs    x1, dczid_el0
           |     tbnz    x1, #4, 2f    /* Branch if DC ZVA is prohibited */
           EOF
-
           apply_patch() {
             local patch="$1"
             if [ -f "$PATCHES_DIR/$patch" ]; then
               patch -p1 --forward < "$PATCHES_DIR/$patch" && \
-                echo "✅ $patch" || echo "⚠️ $patch (skipped/conflict)"
+                echo "✅ $patch" || echo "⚠️ $patch (skipped/conflict — likely already in xkse4 source)"
             else
               echo "⚠️ $patch not found, skipping"
             fi
           }
-          
           apply_patch "optimized_mem_operations.patch"
           apply_patch "file_struct_8bytes_align.patch"
           apply_patch "reduce_cache_pressure.patch"
@@ -624,47 +536,7 @@ jobs:
           apply_patch "silence_irq_cpu_logspam.patch"
           apply_patch "silence_system_logspam.patch"
           apply_patch "use_unlikely_wrap_cpufreq.patch"
-          echo "✅ Optimization patches applied"
-
-      - name: Apply NTSync Patch
-        if: inputs.ntsync_enable
-        working-directory: kernel_workspace/common
-        run: |
-          echo "Enabling NTSync (NT kernel sync primitives)..."
-          NTSYNC_DIR="../wildkernels_patches/common/ntsync"
-
-          # For android15-6.6 use the generic compat patch
-          NTSYNC_PATCH=""
-          for candidate in \
-            "$NTSYNC_DIR/ntsync_compat_android15-6.6.patch" \
-            "$NTSYNC_DIR/ntsync_compat_android15-6.6_OOS16.patch" \
-            "$NTSYNC_DIR/ntsync_compat_android15-6.6_OOS15.patch"; do
-            if [ -f "$candidate" ]; then
-              NTSYNC_PATCH="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$NTSYNC_PATCH" ]; then
-            echo "⚠️ NTSync compat patch for android15-6.6 not found in wildkernels_patches."
-            echo "   Falling back to upstream ntsync driver (mainline backport)..."
-            # Fallback: apply base patch only (adds ntsync.c + Kconfig + Makefile entries)
-            if [ -f "$NTSYNC_DIR/ntsync_base.patch" ]; then
-              patch -p1 --forward < "$NTSYNC_DIR/ntsync_base.patch" || true
-            else
-              echo "::warning::NTSync base patch also not found. Skipping NTSync."
-              exit 0
-            fi
-          else
-            echo "Using: $(basename $NTSYNC_PATCH)"
-            patch -p1 --forward < "$NTSYNC_PATCH" || true
-            if [ -f "$NTSYNC_DIR/ntsync_base.patch" ]; then
-              patch -p1 --forward < "$NTSYNC_DIR/ntsync_base.patch" || true
-            fi
-          fi
-
-          echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/defconfig
-          echo "✅ NTSync enabled"
+          echo "✅ Optimization patches applied (conflicts skipped)"
 
       - name: Add Droidspaces Support
         if: inputs.droidspaces_enable
@@ -672,20 +544,15 @@ jobs:
         run: |
           echo "Enabling Droidspaces (portable Linux containers)..."
           DS_DIR="../wildkernels_patches/common/droidspaces"
-
-          # SM8750 uses the 6/7/8 gen kabi fix
           if [ -f "$DS_DIR/fix_sysvipc_kabi_6_7_8.patch" ]; then
             patch -p1 --forward < "$DS_DIR/fix_sysvipc_kabi_6_7_8.patch" || true
           else
             echo "⚠️ fix_sysvipc_kabi_6_7_8.patch not found, skipping KABI fix"
           fi
-
-          # Fix kernel panic caused by oplus_bsp_midas
           if [ -f "$DS_DIR/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch" ]; then
             patch -p1 --forward < "$DS_DIR/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch" || true
           fi
-
-          cat >> arch/arm64/configs/defconfig << 'EOF'
+          cat >> arch/arm64/configs/xkse4_dodge_defconfig << 'EOF'
           CONFIG_SYSVIPC=y
           CONFIG_DEVTMPFS=y
           CONFIG_PID_NS=y
@@ -701,8 +568,8 @@ jobs:
         working-directory: kernel_workspace/common
         run: |
           echo "Enabling IP_SET + IPv6 NAT..."
-          echo "CONFIG_BPF_STREAM_PARSER=y" >> arch/arm64/configs/defconfig
-          cat >> arch/arm64/configs/defconfig << 'EOF'
+          echo "CONFIG_BPF_STREAM_PARSER=y" >> arch/arm64/configs/xkse4_dodge_defconfig
+          cat >> arch/arm64/configs/xkse4_dodge_defconfig << 'EOF'
           CONFIG_IP_SET=y
           CONFIG_IP_SET_MAX=65534
           CONFIG_IP_SET_BITMAP_IP=y
@@ -726,8 +593,6 @@ jobs:
           CONFIG_IP6_NF_NAT=y
           CONFIG_IP6_NF_TARGET_MASQUERADE=y
           EOF
-
-          # IPv6 NAT fix from WildKernels
           IPNAT_FIX="../wildkernels_patches/common/IPv6_NAT_FIX.patch"
           if [ -f "$IPNAT_FIX" ]; then
             patch -p1 -F 3 < "$IPNAT_FIX" || true
@@ -742,56 +607,12 @@ jobs:
         working-directory: kernel_workspace/common
         run: |
           echo "Enabling TTL/HL Target (hide tethering from carrier)..."
-          cat >> arch/arm64/configs/defconfig << 'EOF'
+          cat >> arch/arm64/configs/xkse4_dodge_defconfig << 'EOF'
           CONFIG_IP_NF_TARGET_TTL=y
           CONFIG_IP6_NF_TARGET_HL=y
           CONFIG_IP6_NF_MATCH_HL=y
           EOF
           echo "✅ TTL/HL Target enabled"
-
-      - name: F2FS Optimizations
-        if: inputs.f2fs_opt
-        working-directory: kernel_workspace
-        run: |
-          cat >> common/arch/arm64/configs/defconfig << 'EOF'
-          CONFIG_F2FS_FS=y
-          CONFIG_F2FS_STAT_FS=y
-          CONFIG_F2FS_FS_XATTR=y
-          CONFIG_F2FS_FS_POSIX_ACL=y
-          CONFIG_F2FS_FS_SECURITY=y
-          CONFIG_F2FS_FS_COMPRESSION=y
-          CONFIG_F2FS_FS_LZO=y
-          CONFIG_F2FS_FS_LZ4=y
-          CONFIG_F2FS_FS_ZSTD=y
-          EOF
-
-      - name: Enable WireGuard
-        if: inputs.wireguard
-        working-directory: kernel_workspace
-        run: |
-          echo "CONFIG_WIREGUARD=y" >> common/arch/arm64/configs/defconfig
-
-      - name: Enable Full Netfilter
-        if: inputs.netfilter_full
-        working-directory: kernel_workspace
-        run: |
-          cat >> common/arch/arm64/configs/defconfig << 'EOF'
-          CONFIG_NF_CONNTRACK=y
-          CONFIG_NF_CONNTRACK_MARK=y
-          CONFIG_NF_CONNTRACK_ZONES=y
-          CONFIG_NF_CONNTRACK_TIMESTAMP=y
-          CONFIG_NF_CONNTRACK_EVENTS=y
-          CONFIG_NF_CONNTRACK_TIMEOUT=y
-          CONFIG_NF_CONNTRACK_LABELS=y
-          CONFIG_NF_NAT=y
-          CONFIG_NF_NAT_MASQUERADE=y
-          CONFIG_NETFILTER_XT_MATCH_HASHLIMIT=y
-          CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
-          CONFIG_NETFILTER_XT_MATCH_CONNLIMIT=y
-          CONFIG_NETFILTER_XT_MATCH_STATE=y
-          CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
-          CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
-          EOF
 
       - name: Enable LRNG v59
         if: inputs.lrng_enable
@@ -799,8 +620,9 @@ jobs:
         run: |
           echo "Enabling LRNG v59..."
           git clone --depth=1 https://github.com/smuellerDD/lrng.git /tmp/lrng_src
+          mkdir -p drivers/char/lrng
           cp -r /tmp/lrng_src/drivers/char/lrng/* drivers/char/lrng/
-          cat >> arch/arm64/configs/defconfig << 'EOF'
+          cat >> arch/arm64/configs/xkse4_dodge_defconfig << 'EOF'
           CONFIG_LRNG=y
           CONFIG_LRNG_SHA256=y
           CONFIG_LRNG_COLLECTION_SIZE=1024
@@ -815,14 +637,16 @@ jobs:
         if: inputs.wakelock_blocker
         working-directory: kernel_workspace/common
         run: |
+          # NOTE: xkse4 source already has Boeffla Wakelock Blocker (sysfs-based, userspace configurable).
+          # This step adds a COMPLEMENTARY hardcoded blocklist at a lower level (wakeup.c)
+          # that blocks specific sources BEFORE they can hold or abort suspend.
+          # The two work together: Boeffla for user-configurable blocking, this for kernel-level hard blocks.
           WAKEUP_C="drivers/base/power/wakeup.c"
           if [ ! -f "$WAKEUP_C" ]; then
             echo "Error: $WAKEUP_C not found!"
             exit 1
           fi
           cp "$WAKEUP_C" "$WAKEUP_C.bak"
-
-          # 1. Inject blocklist + helper after #include "power.h"
           awk '
           1;
           /#include "power\.h"/ {
@@ -849,16 +673,6 @@ jobs:
               print "}"
           }
           ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
-
-          # 2. Inject the block check at the two real entry points:
-          #    __pm_stay_awake() and pm_wakeup_ws_event(). These are the only
-          #    two callers of wakeup_source_report_event(), so blocking here
-          #    (before the spinlock, before ws->active is ever touched, and
-          #    before a "hard" event can reach pm_system_wakeup()) actually
-          #    stops the source from holding OR aborting suspend.
-          #    Patching the old target, wakeup_source_activate(), only hid the
-          #    accounting - pm_system_wakeup() would still fire for hard=true
-          #    events, so the blocked sources kept waking the device anyway.
           awk '
           /^void __pm_stay_awake\(struct wakeup_source \*ws\)$/ { infn=1 }
           /^void pm_wakeup_ws_event\(struct wakeup_source \*ws, unsigned int msec, bool hard\)$/ { infn=1 }
@@ -871,8 +685,6 @@ jobs:
           }
           1
           ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
-
-          # 3. Verify: blocklist array once, hook inserted in BOTH entry points
           FAILED=0
           if ! grep -q "blocked_wakeup_sources\[\]" "$WAKEUP_C"; then
             echo "❌ Blocklist array NOT inserted"
@@ -883,45 +695,24 @@ jobs:
             echo "❌ Expected 2 blocking hooks (__pm_stay_awake + pm_wakeup_ws_event), found $HOOK_COUNT"
             FAILED=1
           fi
-
           echo "── diff ──"
           diff -u "$WAKEUP_C.bak" "$WAKEUP_C" || true
-
           if [ "$FAILED" -eq 1 ]; then
             echo "❌ Wakelock blocker injection FAILED. Restoring original."
             mv "$WAKEUP_C.bak" "$WAKEUP_C"
             exit 1
           fi
           rm -f "$WAKEUP_C.bak"
-          echo "✅ Wakelock blocker applied and verified"
-
-      - name: Configure BBR & Brutal
-        run: |
-          if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
-            cd kernel_workspace
-            echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_NV=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_HTCP=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_TCP_CONG_BRUTAL=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/defconfig
-            echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/defconfig
-            if [[ "${{ github.event.inputs.bbr_enable }}" == "default" ]]; then
-              echo "CONFIG_DEFAULT_TCP_CONG=bbr" >> ./common/arch/arm64/configs/defconfig
-            else
-              echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./common/arch/arm64/configs/defconfig
-            fi
-          fi
+          echo "✅ Wakelock blocker applied and verified (complements Boeffla in source)"
 
       - name: Apply BBRv3
+        if: inputs.bbrv3_enable
         working-directory: kernel_workspace/common
         run: |
           echo "::group::Apply BBRv3 patches"
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/defconfig
-          echo "CONFIG_TCP_CONG_BBR3=y"     >> arch/arm64/configs/defconfig
+          echo "NOTE: BBRv3 was added then REVERTED in xkse4 source. Re-applying..."
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/xkse4_dodge_defconfig
+          echo "CONFIG_TCP_CONG_BBR3=y"     >> arch/arm64/configs/xkse4_dodge_defconfig
           BBRV3_PATCH="../wildkernels_patches/common/bbrv3/0001-net-tcp-backport-BBRv3-to-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"
           if [ -f "$BBRV3_PATCH" ]; then
             patch -p1 -F 3 < "$BBRV3_PATCH"
@@ -934,32 +725,28 @@ jobs:
       - name: Configure LTO
         run: |
           cd kernel_workspace
+          DEFCONFIG="./common/arch/arm64/configs/xkse4_dodge_defconfig"
           if [[ "${{ github.event.inputs.lto_type }}" == "none" ]]; then
-            echo "CONFIG_LTO_CLANG_NONE=y" >> ./common/arch/arm64/configs/defconfig
+            echo "CONFIG_LTO_CLANG_NONE=y" >> "$DEFCONFIG"
           elif [[ "${{ github.event.inputs.lto_type }}" == "full" ]]; then
-            echo "CONFIG_LTO_CLANG_FULL=y" >> ./common/arch/arm64/configs/defconfig
+            echo "CONFIG_LTO_CLANG_FULL=y" >> "$DEFCONFIG"
           else
-            echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/defconfig
+            echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
           fi
-
-      - name: Configure ADIOS IO
-        if: inputs.adios_enable
-        run: |
-          cd kernel_workspace
-          echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/defconfig
-          echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/defconfig
 
       - name: Configure Re-Kernel
         if: inputs.rekernel_enable
         run: |
           cd kernel_workspace
-          echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/defconfig
+          echo "NOTE: Re-Kernel was removed from xkse4 source. Re-adding config only."
+          echo "NOTE: You may need to re-apply the Re-Kernel source patch separately."
+          echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/xkse4_dodge_defconfig
 
       - name: Configure Baseband Guard
         if: inputs.baseband_guard
         run: |
           cd kernel_workspace
-          echo "CONFIG_BBG=y" >> ./common/arch/arm64/configs/defconfig
+          echo "CONFIG_BBG=y" >> ./common/arch/arm64/configs/xkse4_dodge_defconfig
           cd ./common
           curl -sSL https://github.com/cctv18/Baseband-guard/raw/master/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
@@ -967,17 +754,9 @@ jobs:
       - name: 📦 Add build name
         run: |
           cd kernel_workspace
-          # xkse4's defconfig ships without a CONFIG_LOCALVERSION line (unlike the old
-          # palazik source), so set it directly instead of rewriting a "-4k" suffix that
-          # doesn't exist here.
-          DEFCONFIG_PATH="./common/arch/arm64/configs/defconfig"
-          if grep -q '^CONFIG_LOCALVERSION=' "$DEFCONFIG_PATH"; then
-            sudo sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-palaziks-ShiftPorts"/' "$DEFCONFIG_PATH"
-          else
-            echo 'CONFIG_LOCALVERSION="-palaziks-ShiftPorts"' | sudo tee -a "$DEFCONFIG_PATH" > /dev/null
-          fi
+          sudo sed -i "s/-4k/-palaziks-ShiftPorts/g" ./common/arch/arm64/configs/xkse4_dodge_defconfig
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
-          echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG_PATH"
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/xkse4_dodge_defconfig
 
       - name: 🔨 Build Kernel
         run: |
@@ -988,22 +767,15 @@ jobs:
           echo "Clang: $($CLANG_DIR/clang --version | head -n 1)"
           echo "LLD:   $($CLANG_DIR/ld.lld --version | head -n 1)"
           pahole --version 2>/dev/null || echo "Pahole: Not Installed"
-
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           export CCACHE_LOGFILE="${{ github.workspace }}/kernel_workspace/ccache.log"
           export CCACHE_IS_KERNEL_COMPILING=true
-
-          # RAM disk for build output (15GB RAM available, safe to use)
           mkdir -p $GITHUB_WORKSPACE/kout
-          mkdir -p $GITHUB_WORKSPACE/ldcache_6.6.140
-
+          mkdir -p $GITHUB_WORKSPACE/ldcache_6.6.142
           cd kernel_workspace/common
-
-          # LTO thin cache wrapper pointing to RAM disk
           echo '#!/bin/bash' > ld-wrapper
-          echo 'ld.lld "$@" --thinlto-cache-dir=$GITHUB_WORKSPACE/ldcache_6.6.140 --thinlto-jobs=$(($(nproc --all) / 2))' >> ld-wrapper
+          echo 'ld.lld "$@" --thinlto-cache-dir=$GITHUB_WORKSPACE/ldcache_6.6.142 --thinlto-jobs=$(($(nproc --all) / 2))' >> ld-wrapper
           chmod +x ld-wrapper
-
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so || true
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so || true
           chmod 777 ./*.so || true
@@ -1011,21 +783,18 @@ jobs:
           export FAKESTAT="2025-05-25 12:00:00"
           export FAKETIME="@2025-05-25 13:00:00"
           export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
-
-          # defconfig pass — output to RAM disk
+          # defconfig pass — using xkse4_dodge_defconfig
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
             KCFLAGS="-O2 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option" \
-            defconfig
-
-          # Image build — output to RAM disk
+            xkse4_dodge_defconfig
+          # Image build — EXTRA_CFLAGS includes -mcpu=oryon-1 which overrides source's -march=armv9.1-a
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
             KCFLAGS="-O2 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option ${EXTRA_CFLAGS:-} ${MAP}" \
             Image
-
           echo "Kernel Compilation Complete!"
           ccache -c
           ccache --evict-older-than 10800s
@@ -1038,7 +807,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-neov4-6.6.140-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          key: ccache-neov4-6.6.142-xkse4-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: 📦 Save LTO CCache
         if: success() && inputs.lto_type == 'thin'
@@ -1046,7 +815,7 @@ jobs:
         with:
           path: ${{ env.LDCACHE_DIR }}
           key: lto-cache-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          
+
       - name: 🧠 Package AK3 ZIP
         id: create_zip
         run: |
@@ -1060,14 +829,10 @@ jobs:
             exit 1
           fi
           KSU_TYPENAME="ReSukiSU"
-          if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
-            wget https://raw.githubusercontent.com/$GITHUB_REPOSITORY/refs/heads/$GITHUB_REF_NAME/zram.zip || true
-          fi
-          AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_6.6.140_palaziks-ShiftPorts.zip
-          FULL_VERSION=6.6.140-palaziks-ShiftPorts
+          AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_6.6.142_palaziks-ShiftPorts-xkse4.zip
+          FULL_VERSION=6.6.142-palaziks-ShiftPorts
           zip -r ../$AK3_NAME ./*
           echo "ak3name=$AK3_NAME" >> $GITHUB_OUTPUT
-          
           TIME_NOW="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
           echo "Author: $GITHUB_ACTOR" > ./ak3.log
           echo "Repo: $GITHUB_REPOSITORY" >> ./ak3.log
@@ -1076,22 +841,26 @@ jobs:
           echo "Commit: $GITHUB_SHA" >> ./ak3.log
           echo "Time: $TIME_NOW" >> ./ak3.log
           echo "Kernel Ver: $FULL_VERSION" >> ./ak3.log
+          echo "Source: xkse4/android_kernel_common_oneplus_sm8750" >> ./ak3.log
           echo "KSU Branch: ${KSU_TYPENAME}" >> ./ak3.log
           echo "KSU Ver: ${KSUVER}" >> ./ak3.log
           echo "SuSFS: ${{ github.event.inputs.SUSFS }}" >> ./ak3.log
-          echo "LZ4: ${{ github.event.inputs.lz4_enable }}" >> ./ak3.log
-          echo "LZ4KD: ${{ github.event.inputs.lz4kd_enable }}" >> ./ak3.log
-          echo "BBR&Brutal: ${{ github.event.inputs.bbr_enable }}" >> ./ak3.log
-          echo "BBRv3: true (stock)" >> ./ak3.log
-          echo "ADIOS: ${{ github.event.inputs.adios_enable }}" >> ./ak3.log
-          echo "Re-Kernel: ${{ github.event.inputs.rekernel_enable }}" >> ./ak3.log
+          echo "BBRv3: ${{ github.event.inputs.bbrv3_enable }}" >> ./ak3.log
+          echo "BORE: ${{ github.event.inputs.bore_enable }}" >> ./ak3.log
+          echo "Fengchi: ${{ github.event.inputs.fengchi }}" >> ./ak3.log
           echo "BBG: ${{ github.event.inputs.baseband_guard }}" >> ./ak3.log
-          echo "NTSync: ${{ github.event.inputs.ntsync_enable }}" >> ./ak3.log
+          echo "LRNG: ${{ github.event.inputs.lrng_enable }}" >> ./ak3.log
+          echo "CPU Opt (oryon-1): ${{ github.event.inputs.cpu_opt }}" >> ./ak3.log
+          echo "Wakelock Blocker: ${{ github.event.inputs.wakelock_blocker }}" >> ./ak3.log
           echo "Droidspaces: ${{ github.event.inputs.droidspaces_enable }}" >> ./ak3.log
           echo "IP_SET+IPv6NAT: ${{ github.event.inputs.ip_set_enable }}" >> ./ak3.log
           echo "TTL: ${{ github.event.inputs.ttl_enable }}" >> ./ak3.log
           echo "MemOpt: ${{ github.event.inputs.mem_opt_patches }}" >> ./ak3.log
-          echo "BORE: ${{ github.event.inputs.bore_enable }}" >> ./ak3.log
+          echo "Re-Kernel: ${{ github.event.inputs.rekernel_enable }}" >> ./ak3.log
+          echo "── Built-in (xkse4 source) ──" >> ./ak3.log
+          echo "BBR/Brutal/C2TCP/ROCCET (BBR default), ADIOS 3.2, LZ4 1.10.0+armv8, ZSTD 1.5.7," >> ./ak3.log
+          echo "LZ4K/LZ4KD, ZRAM Writeback+Batch, NTSync, WireGuard, Boeffla WL Blocker," >> ./ak3.log
+          echo "Full Netfilter, F2FS+compression, Oryon -march=armv9.1-a, EROFS opts" >> ./ak3.log
           zip -z ../$AK3_NAME < ./ak3.log
 
       - name: 📤 Upload AnyKernel3
@@ -1128,12 +897,11 @@ jobs:
         run: |
           DATE=$(date +"%Y-%m-%d %H:%M:%S %Z")
           COMMIT_HASH=$(echo "${{ github.sha }}" | cut -c1-8)
-          COMMIT_MSG="Workflow Dispatch: 6.6.140"
+          COMMIT_MSG="Workflow Dispatch: 6.6.142 (xkse4)"
           REPO_URL="https://github.com/${{ github.repository }}"
           RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
           TIME_NOW="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-
-          export TG_KERNEL_VERSION="6.6.140"
+          export TG_KERNEL_VERSION="6.6.142"
           export TG_KSU_DISPLAY="ReSukiSU"
           export TG_KSUVER="${{ env.KSUVER }}"
           export TG_SUFFIX="palaziks-ShiftPorts"
@@ -1143,90 +911,81 @@ jobs:
           export TG_RUN_URL="$RUN_URL"
           export TG_REPO="${{ github.repository }}"
           export TG_SUSFS="${{ github.event.inputs.SUSFS }}"
-          export TG_BBR="${{ github.event.inputs.bbr_enable }}"
-          export TG_BBR3="true"
-          export TG_ADIOS="${{ github.event.inputs.adios_enable }}"
-          export TG_BBG="${{ github.event.inputs.baseband_guard }}"
-          export TG_LZ4="${{ github.event.inputs.lz4_enable }}"
-          export TG_LZ4KD="${{ github.event.inputs.lz4kd_enable }}"
-          export TG_MM="true"
-          export TG_FENGCHI="${{ github.event.inputs.fengchi }}"
-          export TG_HMBIRD="false"
-          export TG_UFIX="true"
+          export TG_BBRV3="${{ github.event.inputs.bbrv3_enable }}"
           export TG_BORE="${{ github.event.inputs.bore_enable }}"
-          export TG_ZWB="${{ github.event.inputs.zram_writeback }}"
-          export TG_SCHED="${{ github.event.inputs.schedutil_opt }}"
-          export TG_CLANG="ZyCromerZ-19"
-          export TG_CPU_OPT="${{ github.event.inputs.cpu_opt }}"
-          export TG_F2FS="${{ github.event.inputs.f2fs_opt }}"
-          export TG_WG="${{ github.event.inputs.wireguard }}"
+          export TG_FENGCHI="${{ github.event.inputs.fengchi }}"
+          export TG_BBG="${{ github.event.inputs.baseband_guard }}"
           export TG_LRNG="${{ github.event.inputs.lrng_enable }}"
+          export TG_CPU_OPT="${{ github.event.inputs.cpu_opt }}"
           export TG_WLB="${{ github.event.inputs.wakelock_blocker }}"
-          export TG_NTSYNC="${{ github.event.inputs.ntsync_enable }}"
           export TG_DROIDSPACES="${{ github.event.inputs.droidspaces_enable }}"
           export TG_IP_SET="${{ github.event.inputs.ip_set_enable }}"
           export TG_TTL="${{ github.event.inputs.ttl_enable }}"
           export TG_MEM_OPT="${{ github.event.inputs.mem_opt_patches }}"
-
+          export TG_REKERNEL="${{ github.event.inputs.rekernel_enable }}"
           TELEGRAPH_URL=$(python3 << 'PYEOF'
           import json, urllib.request, urllib.parse, os
-
           e = os.environ.get
-
           def feat(val, name):
               icon = "✅" if val == "true" else "❌"
               return {"tag": "li", "children": [f"{icon} {name}"]}
-
           content = [
-              {"tag": "h3", "children": ["OnePlus 13 (PJZ110) — palaziks kernel"]},
+              {"tag": "h3", "children": ["OnePlus 13 (PJZ110) — palaziks kernel (xkse4 source)"]},
               {"tag": "hr"},
               {"tag": "h4", "children": ["📋 Build Info"]},
               {"tag": "ul", "children": [
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Device: "]}, "OnePlus 13 PJZ110 (CN) / SM8750"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Kernel: "]}, f"{e('TG_KERNEL_VERSION')}-android15"]},
+                  {"tag": "li", "children": [{"tag": "strong", "children": ["Source: "]}, "xkse4/android_kernel_common_oneplus_sm8750"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Manager: "]}, f"{e('TG_KSU_DISPLAY')} v{e('TG_KSUVER')}"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Suffix: "]}, f"-{e('TG_SUFFIX')}"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["LTO: "]}, e("TG_LTO")]},
-                  {"tag": "li", "children": [{"tag": "strong", "children": ["Clang: "]}, e("TG_CLANG")]},
+                  {"tag": "li", "children": [{"tag": "strong", "children": ["Clang: "]}, "ZyCromerZ-19"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Build #: "]}, e("TG_BUILD_NUM")]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Time: "]}, e("TG_TIME_NOW")]}
               ]},
               {"tag": "hr"},
-              {"tag": "h4", "children": ["⚡ Features"]},
+              {"tag": "h4", "children": ["⚡ Features (added by workflow)"]},
               {"tag": "ul", "children": [
                   feat(e("TG_SUSFS"),   "SuSFS"),
-                  feat("true" if e("TG_BBR") != "false" else "false", f"BBR/Brutal ({e('TG_BBR')})"),
-                  feat(e("TG_BBR3"), "BBRv3 TCP Congestion Control"),
-                  feat(e("TG_ADIOS"),   "ADIOS IO Scheduler"),
+                  feat(e("TG_BBRV3"),   "BBRv3 TCP Congestion Control (re-applied, was reverted)"),
+                  feat(e("TG_BORE"),    "BORE Scheduler"),
+                  feat(e("TG_FENGCHI"), "Fengchi/HMBIRD Optimization"),
                   feat(e("TG_BBG"),     "Baseband Guard"),
-                  feat(e("TG_LZ4"),     "LZ4 1.10.0 + ZSTD 1.5.7"),
-                  feat(e("TG_LZ4KD"),  "LZ4KD ZRAM"),
-                  feat(e("TG_MM"),      "Multi-Manager Support"),
-                  feat(e("TG_FENGCHI"),"Fengchi Optimization"),
-                  feat(e("TG_UFIX"),    "Unicode Bypass Fix"),
-                  feat(e("TG_BORE"),    "BORE Scheduler (EEVDF burst enhancer)"),
-                  feat(e("TG_ZWB"),     "ZRAM Writeback"),
-                  feat(e("TG_SCHED"),  "SchedUtil Optimizations"),
-                  feat(e("TG_CPU_OPT"),"Oryon CPU Optimizations"),
-                  feat(e("TG_F2FS"),   "F2FS Optimizations"),
-                  feat(e("TG_WG"),     "WireGuard VPN kernel level support"),
-                  feat(e("TG_LRNG"),   "LRNG v59"),
-                  feat(e("TG_WLB"),    "Wakelock Blocker"),
-                  feat(e("TG_NTSYNC"),      "NTSync (NT sync primitives)"),
-                  feat(e("TG_DROIDSPACES"), "Droidspaces (proot-distro support)"),
-                  feat(e("TG_IP_SET"),      "IP_SET + IPv6 NAT"),
-                  feat(e("TG_TTL"),         "TTL/HL Target (hide tethering)"),
-                  feat(e("TG_MEM_OPT"),     "Memory & Scheduler Optimizations"),
+                  feat(e("TG_LRNG"),    "LRNG v59"),
+                  feat(e("TG_CPU_OPT"), "Oryon -mcpu=oryon-1 tuning (overrides source -march)"),
+                  feat(e("TG_WLB"),     "Custom Wakelock Blocker (complements Boeffla)"),
+                  feat(e("TG_REKERNEL"),"Re-Kernel (re-added, was removed)"),
+                  feat(e("TG_DROIDSPACES"), "Droidspaces (proot-distro)"),
+                  feat(e("TG_IP_SET"),  "IP_SET + IPv6 NAT"),
+                  feat(e("TG_TTL"),     "TTL/HL Target"),
+                  feat(e("TG_MEM_OPT"), "Extra Memory/Sched Optimizations"),
+              ]},
+              {"tag": "hr"},
+              {"tag": "h4", "children": ["🔧 Built-in (xkse4 source)"]},
+              {"tag": "ul", "children": [
+                  {"tag": "li", "children": ["✅ BBR/Brutal/C2TCP/ROCCET (BBR default)"]},
+                  {"tag": "li", "children": ["✅ ADIOS 3.2 IO Scheduler"]},
+                  {"tag": "li", "children": ["✅ LZ4 1.10.0 + armv8 asm + LZ4K/LZ4KD"]},
+                  {"tag": "li", "children": ["✅ ZSTD 1.5.7"]},
+                  {"tag": "li", "children": ["✅ ZRAM Writeback + Batch + Multi-comp"]},
+                  {"tag": "li", "children": ["✅ NTSync"]},
+                  {"tag": "li", "children": ["✅ WireGuard"]},
+                  {"tag": "li", "children": ["✅ Boeffla Wakelock Blocker (sysfs-based)"]},
+                  {"tag": "li", "children": ["✅ Full Netfilter (conntrack/NAT/hashlimit)"]},
+                  {"tag": "li", "children": ["✅ F2FS + compression"]},
+                  {"tag": "li", "children": ["✅ Oryon -march=armv9.1-a+nosve+crypto+sha3+sm4+rng"]},
+                  {"tag": "li", "children": ["✅ EROFS optimizations"]},
+                  {"tag": "li", "children": ["✅ Scheduler/cpufreq fixes + high-freq tick"]},
               ]},
               {"tag": "hr"},
               {"tag": "h4", "children": ["🎯 ROM Compatibility"]},
-              {"tag": "p", "children": ["⚠️ Built with ZyCromerZ Clang for ColorOS / OxygenOS ONLY. To flash on an AOSP-based ROM, build the matching \"... AOSP\" workflow yourself — AOSP Clang builds are for AOSP ROMs only."]},
+              {"tag": "p", "children": ["⚠️ Built with ZyCromerZ Clang for ColorOS / OxygenOS ONLY."]},
               {"tag": "hr"},
               {"tag": "h4", "children": ["📥 Installation"]},
               {"tag": "ol", "children": [
                   {"tag": "li", "children": ["Flash AnyKernel3 zip via TWRP or KernelFlasher"]},
                   {"tag": "li", "children": ["Install metamodule: mountify / meta-overlayfs / meta-magicmount"]},
-                  {"tag": "li", "children": ["I'm not responsible for bricked devices / losen data or other things"]},
               ]},
               {"tag": "hr"},
               {"tag": "p", "children": [
@@ -1234,18 +993,16 @@ jobs:
                   "  |  ",
                   {"tag": "a", "attrs": {"href": f"https://github.com/{e('TG_REPO')}"}, "children": [f"📦 {e('TG_REPO')}"]},
               ]},
-              {"tag": "p", "children": ["Built by @palaziks"]},
+              {"tag": "p", "children": ["Built by @palaziks | Source: xkse4"]},
           ]
-
           data = {
               "access_token": os.environ.get("TELEGRAPH_TOKEN", ""),
-              "title": f"palaziks kernel — OP13 {e('TG_KERNEL_VERSION')}-{e('TG_SUFFIX')} #{e('TG_BUILD_NUM')}",
+              "title": f"palaziks kernel (xkse4) — OP13 {e('TG_KERNEL_VERSION')}-{e('TG_SUFFIX')} #{e('TG_BUILD_NUM')}",
               "author_name": "palaziks",
               "author_url": f"https://github.com/{e('TG_REPO')}",
               "content": json.dumps(content),
               "return_content": "false"
           }
-
           req = urllib.request.Request(
               "https://api.telegra.ph/createPage",
               data=urllib.parse.urlencode(data).encode(),
@@ -1266,16 +1023,13 @@ jobs:
               print("")
           PYEOF
           )
-
-          CAPTION="✅ <b>Kernel Build Successful!</b>
-
+          CAPTION="✅ <b>Kernel Build Successful!</b> (xkse4 source)
           📱 <b>Device:</b> <code>OnePlus 13</code>
           ⚡ <b>KSU:</b> <code>ReSukiSU</code>
           📅 <b>Date:</b> $DATE
           📝 <b>Commit:</b> <code>$COMMIT_MSG</code>
           🔢 <b>Hash:</b> <a href=\"$REPO_URL/commit/${{ github.sha }}\">$COMMIT_HASH</a>
           🔧 <b>Kernel features:</b> <a href=\"$TELEGRAPH_URL\">click to read</a>"
-
           ZIP_PATH=$(ls ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip | head -n 1)
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" \
             -F chat_id="$TELEGRAM_CHAT_ID" \
@@ -1291,14 +1045,11 @@ jobs:
         run: |
           DATE=$(date +"%Y-%m-%d %H:%M:%S %Z")
           REPO_URL="https://github.com/${{ github.repository }}"
-          CAPTION="❌ <b>Kernel Build Failed!</b>
-
+          CAPTION="❌ <b>Kernel Build Failed!</b> (xkse4 source)
           📱 <b>Device:</b> <code>OnePlus 13</code>
           ⚡ <b>KSU:</b> <code>ReSukiSU</code>
           📅 <b>Date:</b> $DATE
-          📝 <b>Commit:</b> <code>$COMMIT_MSG</code>
           🔢 <b>Hash:</b> <a href=\"$REPO_URL/commit/${{ github.sha }}\">$(echo "${{ github.sha }}" | cut -c1-8)</a>"
-          
           if [ -f /tmp/kbuild.log ]; then
             curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" \
               -F chat_id="$TELEGRAM_CHAT_ID" \
@@ -1319,7 +1070,6 @@ jobs:
       contents: write
       packages: write
       actions: read
-      
     steps:
       - name: Download ZIP Artifact
         uses: actions/download-artifact@v4
@@ -1329,17 +1079,17 @@ jobs:
 
       - name: Set Environment Variables
         run: |
-          FULL_VERSION=6.6.140-palaziks-ShiftPorts
+          FULL_VERSION=6.6.142-palaziks-ShiftPorts
           echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
           TIME="$(TZ='Asia/Shanghai' date +'%y%m%d%H%M%S')"
           TIME_FORM="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
           echo "TIME=$TIME" >> $GITHUB_ENV
           echo "TIME_FORM=$TIME_FORM" >> $GITHUB_ENV
-          TAG_HEAD="OPPO-OPlus-Realme-build"
+          TAG_HEAD="OPPO-OPlus-Realme-build-xkse4"
           echo "TAG_HEAD=$TAG_HEAD" >> $GITHUB_ENV
           KSU_TYPENAME="ReSukiSU"
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
-          
+
       - name: Create Release
         if: ${{ github.event.inputs.github_release == 'true' }}
         id: create_release
@@ -1347,36 +1097,43 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat << 'EOF' > release_notes.md
-          ### 📱 OnePlus 13 ReSukiSU SM8750 Generic Kernel
-          > ⚠️ **ROM Compatibility:** Built with **ZyCromerZ Clang** for **ColorOS / OxygenOS** only. To flash on an **AOSP**-based ROM, run the matching `Build <manager> AOSP` workflow yourself (AOSP Clang builds are for AOSP ROMs only).
+          ### 📱 OnePlus 13 ReSukiSU SM8750 Kernel (xkse4 source)
+          > ⚠️ **ROM Compatibility:** Built with **ZyCromerZ Clang** for **ColorOS / OxygenOS** only.
+          > **Source:** [xkse4/android_kernel_common_oneplus_sm8750](https://github.com/xkse4/android_kernel_common_oneplus_sm8750)
 
+          #### Workflow-added features:
           - **Kernel Version:** ${{ env.FULL_VERSION }}
           - **Build Time:** ${{ env.TIME_FORM }}
           - **KSU Branch:** ReSukiSU
           - **SuSFS:** ${{ github.event.inputs.SUSFS }}
-          - **NTSync:** ${{ github.event.inputs.ntsync_enable }}
+          - **BBRv3:** ${{ github.event.inputs.bbrv3_enable }} (re-applied, was reverted from source)
+          - **BORE Scheduler:** ${{ github.event.inputs.bore_enable }}
+          - **Fengchi/HMBIRD:** ${{ github.event.inputs.fengchi }}
+          - **Baseband Guard:** ${{ github.event.inputs.baseband_guard }}
+          - **LRNG v59:** ${{ github.event.inputs.lrng_enable }}
+          - **Oryon -mcpu=oryon-1:** ${{ github.event.inputs.cpu_opt }} (overrides source -march=armv9.1-a)
+          - **Custom Wakelock Blocker:** ${{ github.event.inputs.wakelock_blocker }} (complements Boeffla)
+          - **Re-Kernel:** ${{ github.event.inputs.rekernel_enable }} (re-added, was removed from source)
           - **Droidspaces:** ${{ github.event.inputs.droidspaces_enable }}
           - **IP_SET + IPv6 NAT:** ${{ github.event.inputs.ip_set_enable }}
           - **TTL Target:** ${{ github.event.inputs.ttl_enable }}
-          - **Memory & Scheduler Optimizations:** ${{ github.event.inputs.mem_opt_patches }}
-          - **Multi-Manager:** true
-          - **LZ4:** ${{ github.event.inputs.lz4_enable }}
-          - **LZ4KD:** ${{ github.event.inputs.lz4kd_enable }}
-          - **ZRAM Writeback:** ${{ github.event.inputs.zram_writeback }}
-          - **SchedUil Optimizations:** ${{ github.event.inputs.schedutil_opt }}
-          - **BBR/Brutal:** ${{ github.event.inputs.bbr_enable }}
-          - **BBRv3:** true (stock)
-          - **ADIOS IO:** ${{ github.event.inputs.adios_enable }}
-          - **Baseband Guard:** ${{ github.event.inputs.baseband_guard }}
-          - **Fengchi:** ${{ github.event.inputs.fengchi }}
-          - **Oryon CPU Optimizations:** ${{ github.event.inputs.cpu_opt }}
-          - **Unicode Fix:** true (stock)
-          - **BORE Scheduler:** ${{ github.event.inputs.bore_enable }}
-          - **WireGuard:** ${{ github.event.inputs.wireguard }}
-          - **LRNG v59:** ${{ github.event.inputs.lrng_enable }}
-          - **Wakelock Blocker:** ${{ github.event.inputs.wakelock_blocker }}
-          EOF
+          - **Extra Mem/Sched Opts:** ${{ github.event.inputs.mem_opt_patches }}
 
+          #### Built-in (xkse4 source — no patches needed):
+          - BBR/Brutal/C2TCP/ROCCET (BBR default)
+          - ADIOS 3.2 IO Scheduler
+          - LZ4 1.10.0 + armv8 asm + LZ4K/LZ4KD
+          - ZSTD 1.5.7
+          - ZRAM Writeback + Batch + Multi-comp
+          - NTSync
+          - WireGuard
+          - Boeffla Wakelock Blocker (sysfs-based)
+          - Full Netfilter (conntrack/NAT/hashlimit/connlimit)
+          - F2FS + compression
+          - Oryon -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
+          - EROFS optimizations
+          - Scheduler/cpufreq fixes + high-freq tick
+          EOF
           gh release create "${{ env.TAG_HEAD }}-${{ env.TIME }}" \
             --repo "${{ github.repository }}" \
             --title "${{ env.TAG_HEAD }}-${{ env.FULL_VERSION }}" \

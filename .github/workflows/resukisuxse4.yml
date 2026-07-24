@@ -469,38 +469,66 @@ jobs:
           patch -p1 -F 3 < /tmp/bore.patch
           echo "✅ BORE scheduler applied"
 
-      - name: Apply Memory & Scheduler Optimization Patches
-        if: inputs.mem_opt_patches
-        working-directory: kernel_workspace/common
-        run: |
-          echo "Applying WildKernels optimization patches..."
-          echo "NOTE: Some may already be in xkse4 source — conflicts will be skipped."
-          apply_patch "optimized_mem_operations.patch"
-          apply_patch "file_struct_8bytes_align.patch"
-          apply_patch "reduce_cache_pressure.patch"
-          apply_patch "mem_opt_prefetch.patch"
-          apply_patch "optimise_memcmp.patch"
-          apply_patch "force_tcp_nodelay.patch"
-          apply_patch "reduce_gc_thread_sleep_time.patch"
-          apply_patch "add_timeout_wakelocks_globally.patch"
-          apply_patch "f2fs_reduce_congestion.patch"
-          apply_patch "reduce_freeze_timeout.patch"
-          apply_patch "add_limitation_scaling_min_freq.patch"
-          apply_patch "re_write_limitation_scaling_min_freq.patch"
-          apply_patch "adjust_cpu_scan_order.patch"
-          apply_patch "avoid_extra_s2idle_wake_attempts.patch"
-          apply_patch "disable_cache_hot_buddy.patch"
-          apply_patch "f2fs_enlarge_min_fsync_blocks.patch"
-          apply_patch "increase_ext4_default_commit_age.patch"
-          apply_patch "increase_sk_mem_packets.patch"
-          apply_patch "reduce_pci_pme_wakeups.patch"
-          apply_patch "silence_irq_cpu_logspam.patch"
-          apply_patch "silence_system_logspam.patch"
-          apply_patch "use_unlikely_wrap_cpufreq.patch"
-          apply_patch
-"clear_page_16bytes_align.patch"
-          echo "✅ Optimization patches applied (conflicts skipped)"
+ 
 
+  - name: Apply Memory & Scheduler Optimization Patches
+    if: inputs.mem_opt_patches
+    working-directory: kernel_workspace/common
+    run: |
+      echo "Applying WildKernels optimization patches (xkse4-compatible subset)..."
+      PATCHES_DIR="../wildkernels_patches/common"
+
+      # ── REMOVED (already in xkse4 source or context-incompatible): ──
+      # ✗ optimized_mem_operations.patch      → reversed/previously applied (lib/string.c)
+      # ✗ file_struct_8bytes_align.patch      → reversed/previously applied (include/linux/fs.h)
+      # ✗ optimise_memcmp.patch               → reversed/previously applied (arch/arm64/lib/memcmp.S)
+      # ✗ minimise_wakeup_time.patch          → hunk FAILED (kernel/time/alarmtimer.c)
+      # ✗ int_sqrt.patch                      → hunk FAILED (lib/math/int_sqrt.c)
+      # ✗ reduce_gc_thread_sleep_time.patch   → reversed/previously applied (fs/f2fs/gc.h)
+      # ✗ reduce_freeze_timeout.patch         → partial apply (main.c OK, process.c FAILED)
+      # ✗ clear_page_16bytes_align.patch      → hunk FAILED (arch/arm64/lib/clear_page.S)
+      # ✗ adjust_cpu_scan_order.patch         → reversed/previously applied (kernel/sched/fair.c)
+      # ✗ avoid_extra_s2idle_wake_attempts.patch → reversed/previously applied (wakeup.c)
+      # ────────────────────────────────────────────────────────────────
+
+      apply_patch() {
+        local patch="$1"
+        if [ -f "$PATCHES_DIR/$patch" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/$patch" && \
+            echo "✅ $patch" || echo "⚠️ $patch (skipped/conflict)"
+        else
+          echo "⚠️ $patch not found, skipping"
+        fi
+      }
+
+      # ── Memory / cache ──
+      apply_patch "reduce_cache_pressure.patch"
+      apply_patch "mem_opt_prefetch.patch"
+      apply_patch "disable_cache_hot_buddy.patch"
+
+      # ── TCP / networking ──
+      apply_patch "force_tcp_nodelay.patch"
+      apply_patch "increase_sk_mem_packets.patch"
+
+      # ── F2FS / ext4 ──
+      apply_patch "f2fs_reduce_congestion.patch"
+      apply_patch "f2fs_enlarge_min_fsync_blocks.patch"
+      apply_patch "increase_ext4_default_commit_age.patch"
+
+      # ── Power / wakelock ──
+      apply_patch "add_timeout_wakelocks_globally.patch"
+      apply_patch "reduce_pci_pme_wakeups.patch"
+
+      # ── CPUFreq ──
+      apply_patch "add_limitation_scaling_min_freq.patch"
+      apply_patch "re_write_limitation_scaling_min_freq.patch"
+      apply_patch "use_unlikely_wrap_cpufreq.patch"
+
+      # ── Log noise reduction ──
+      apply_patch "silence_irq_cpu_logspam.patch"
+      apply_patch "silence_system_logspam.patch"
+
+      echo "✅ Optimization patches applied (15/25 — 10 skipped, already in xkse4 source)"
       - name: Add Droidspaces Support
         if: inputs.droidspaces_enable
         working-directory: kernel_workspace/common

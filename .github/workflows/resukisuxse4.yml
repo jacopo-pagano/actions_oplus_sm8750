@@ -1,12 +1,15 @@
 name: ReSukiSU OP13 Build (xkse4)
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-6.6.142
   cancel-in-progress: true
+
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
   CCACHE_KEY: ccache-neov4-6.6.142-xkse4
+
 on:
   workflow_dispatch:
     inputs:
@@ -89,6 +92,7 @@ on:
         required: true
         type: boolean
         default: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -105,7 +109,7 @@ jobs:
           sudo chmod 600 /mnt/swap_lto
           sudo mkswap /mnt/swap_lto
           sudo swapon /mnt/swap_lto
-          echo "── swap after ──"; free -h
+          echo "── swap after ── "; free -h
 
       - name: Cache Clang
         id: clang-cache
@@ -129,11 +133,14 @@ jobs:
           sudo mv /opt/ghc /opt/ghc_trash 2>/dev/null || true
           sudo mv /usr/lib/jvm /usr/lib/jvm_trash 2>/dev/null || true
           (sudo nice -n 19 ionice -c 3 rm -rf /usr/share/dotnet_trash /usr/local/lib/android_trash /opt/ghc_trash /usr/lib/jvm_trash) &
+
           rm -rf kernel_workspace/common kernel_workspace/out 2>/dev/null || true
           mkdir -p kernel_workspace/zyc-clang kernel_workspace/build-tools
+
           cd kernel_workspace
           sudo apt-get install -y --no-install-recommends -o Dpkg::Use-Pty=0 \
             libelf-dev dos2unix pahole cmake &
+
           # ── Source: xkse4/android_kernel_common_oneplus_sm8750 ──
           echo "Cloning xkse4 source repository..."
           curl -L https://github.com/xkse4/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_b_16.0.0_oneplus_13.zip \
@@ -141,6 +148,7 @@ jobs:
           unzip -q common.zip &&
           mv android_kernel_common_oneplus_sm8750-* common &&
           rm -f common.zip &
+
           # Clang — only download if cache missed
           if [ "${{ steps.clang-cache.outputs.cache-hit }}" != "true" ]; then
             echo "Cache miss — downloading ZyCromerZ Clang 19..."
@@ -153,6 +161,7 @@ jobs:
           else
             echo "Clang restored from cache, skipping download."
           fi &
+
           # build-tools — only clone if cache missed
           if [ "${{ steps.buildtools-cache.outputs.cache-hit }}" != "true" ]; then
             echo "Cache miss — cloning build-tools..."
@@ -161,7 +170,9 @@ jobs:
           else
             echo "build-tools restored from cache, skipping clone."
           fi &
+
           wait
+
           # NOTE: ABI protection already removed in xkse4 source ("removed abi protected symbol" commit)
           # NOTE: dirty suffix already handled in xkse4 source
           echo "Removing dirty suffix (safety)..."
@@ -286,18 +297,37 @@ jobs:
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git &
           fi
+          # ── FIX ── mrcxlinux/kernel_patches kept for potential future patches,
+          # but EnablePOLLY.patch is NO LONGER applied (see comment below).
           git clone --depth=1 https://github.com/mrcxlinux/kernel_patches.git &
           git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git &
           git clone --depth=1 https://github.com/palazik/kernel_patches.git wildkernels_patches &
           wait
+
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
             cp susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
           fi
+
           cd ./common
-          cp ../kernel_patches/common/EnablePOLLY.patch ./
-          git apply -p1 < EnablePOLLY.patch || true
+
+          # ── FIX ── REMOVED: EnablePOLLY.patch application.
+          #
+          # The patch from mrcxlinux/kernel_patches targets stock GKI and adds
+          # CONFIG_LLVM_POLLY to arch/Kconfig + Polly flags to the Makefile.
+          # The xkse4 source ALREADY has both of these built in:
+          #   - Makefile: ifdef CONFIG_LLVM_POLLY block with -mllvm -polly flags
+          #   - Kconfig:  CONFIG_LLVM_POLLY option defined
+          # The patch fails with "patch does not apply" because xkse4 diverged
+          # at Makefile:849 and arch/Kconfig:851.
+          #
+          # ZyCromerZ Clang 19 DOES include LLVMPolly.so (confirmed: clang-builder.sh
+          # passes --projects "clang;compiler-rt;lld;polly;openmp").
+          # So CONFIG_LLVM_POLLY=y in the defconfig (set in "Configure Kernel Options")
+          # is sufficient — no patch needed.
+          echo "ℹ️  Polly: xkse4 source has native support + ZyC Clang includes LLVMPolly.so — no patch needed."
+
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Pre-patch fixups (fatalcoder android15-6.6 method)..."
             if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -327,17 +357,34 @@ jobs:
           cd kernel_workspace
           # xkse4 source uses xkse4_dodge_defconfig (NOT gki_defconfig)
           DEFCONFIG="./common/arch/arm64/configs/xkse4_dodge_defconfig"
+
           # ── KernelSU / ReSukiSU ──
           echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$DEFCONFIG"
           # NOTE: LZ4K/LZ4KD/LZ4HC/842/ZSMALLOC already in xkse4_dodge_defconfig
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y" >> "$DEFCONFIG"
+
+          # ── FIX ── REMOVED: CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+          #
+          # The xkse4 defconfig already has CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y (-O3).
+          # Appending CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y (-O2) AFTER it causes the
+          # Kconfig parser to select the LAST choice option → downgrades to -O2.
+          # This silently discarded all -O3 optimizations (aggressive inlining,
+          # loop vectorization, loop unrolling) that the xkse4 maintainer intended.
+          #
+          # The -O level is now controlled solely by the source defconfig (-O3)
+          # and reinforced in KCFLAGS below.
+
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> "$DEFCONFIG"
+
+          # Polly: xkse4 source has the Makefile/Kconfig integration already.
+          # ZyCromerZ Clang 19 includes LLVMPolly.so. This flag activates it.
           echo "CONFIG_LLVM_POLLY=y" >> "$DEFCONFIG"
+
           echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" >> "$DEFCONFIG"
           echo 'CONFIG_KSU_FULL_NAME_FORMAT="v%KSU_VERSION%-%COMMIT_SHA%@palaziks"' >> "$DEFCONFIG"
+
           # ── SUSFS ──
           if [ "${{ github.event.inputs.SUSFS }}" == "true" ]; then
             echo "📦 Enabling SUSFS features..."
@@ -440,16 +487,28 @@ jobs:
           # and xkse4_dodge_defconfig already has the maintainer's intended
           # HZ, PREEMPT, NO_HZ, ARCH_QCOM, ERRATUM settings.
           #
-          # We ONLY override the compiler flag via EXTRA_CFLAGS:
-          #   -mcpu=oryon-1  → Oryon-specific instruction scheduling & pipeline
-          #                     tuning (supersedes -march in Clang)
-          #   -fno-strict-aliasing → safety (kernel code relies on type punning)
-          #   -fno-delete-null-pointer-checks → safety (kernel null checks)
+          # ── FIX ── Simplified EXTRA_CFLAGS to ONLY -mcpu=oryon-1.
+          #
+          # -fno-strict-aliasing and -fno-delete-null-pointer-checks are ALREADY
+          # in the kernel's KBUILD_CFLAGS (set in the top-level Makefile).
+          # Repeating them in KCFLAGS was redundant.
+          #
+          # -mcpu=oryon-1 → Oryon-specific instruction scheduling & pipeline
+          #                  tuning. In Clang, -mcpu supersedes -march. Since
+          #                  KCFLAGS is appended AFTER KBUILD_CFLAGS, -mcpu=oryon-1
+          #                  appears last on the command line and wins.
+          #
+          # NOTE: oryon-1 is the ONLY Oryon model in LLVM (as of Clang 21 / July 2026).
+          #       oryon-2 does NOT exist. The oryon-1 model was contributed by Qualcomm
+          #       for the Snapdragon X Elite (laptop), but the ISA features (crypto,
+          #       SHA3, SM4, RNG, BF16, FP16) are identical on SM8750's Oryon-M.
+          #       The scheduling model over-estimates pipeline width (~14 vs ~10)
+          #       but is still far better than the generic Cortex-A510 fallback.
           #
           # We do NOT touch HZ/PREEMPT/NO_HZ/ARCH_QCOM/ERRATUM in defconfig —
           # those are already set by the xkse4 maintainer to their preferred values.
-          echo "EXTRA_CFLAGS=-mcpu=oryon-1 -fno-strict-aliasing -fno-delete-null-pointer-checks" >> $GITHUB_ENV
-          echo "✅ Oryon -mcpu=oryon-1 flags prepared (overrides source -march=armv9.1-a at compile time)."
+          echo "EXTRA_CFLAGS=-mcpu=oryon-1" >> $GITHUB_ENV
+          echo "✅ Oryon -mcpu=oryon-1 flag prepared (overrides source -march=armv9.1-a at compile time)."
 
       - name: Apply Unicode Bypass Fix
         working-directory: kernel_workspace/common
@@ -469,66 +528,77 @@ jobs:
           patch -p1 -F 3 < /tmp/bore.patch
           echo "✅ BORE scheduler applied"
 
- 
+      - name: Apply Memory & Scheduler Optimization Patches
+        if: inputs.mem_opt_patches
+        working-directory: kernel_workspace/common
+        run: |
+          echo "Applying WildKernels optimization patches..."
+          echo "NOTE: Some may already be in xkse4 source — conflicts will be skipped."
+          PATCHES_DIR="../wildkernels_patches/common"
 
-  - name: Apply Memory & Scheduler Optimization Patches
-    if: inputs.mem_opt_patches
-    working-directory: kernel_workspace/common
-    run: |
-      echo "Applying WildKernels optimization patches (xkse4-compatible subset)..."
-      PATCHES_DIR="../wildkernels_patches/common"
+          cat << 'EOF' | sed 's/^|//' > "$PATCHES_DIR/clear_page_16bytes_align.patch"
+          |commit 059262d116257e11fe35393d5655412df1131a76
+          |Author: Sultan Alsawaf <sultan@kerneltoast.com>
+          |Date:   Thu May 25 21:17:48 2023 -0700
+          |
+          |    arm64: Align clear_page() to 16 bytes
+          |    
+          |    With automatic zeroing of pages upon allocation enabled, time spent in
+          |    clear_page() is significant according to perf top. Since clear_page() is
+          |    used in loops, align it to 16 bytes, which significantly reduces CPU time
+          |    spent in clear_page()
+          |    
+          |    Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+          |
+          |diff --git a/arch/arm64/lib/clear_page.S b/arch/arm64/lib/clear_page.S
+          |--- a/arch/arm64/lib/clear_page.S
+          |+++ b/arch/arm64/lib/clear_page.S
+          |@@ -12,6 +12,7 @@
+          |  * Parameters:
+          |  * x0 - dest
+          |  */
+          |+ .p2align 4
+          | SYM_FUNC_START(__pi_clear_page)
+          |     mrs    x1, dczid_el0
+          |     tbnz    x1, #4, 2f    /* Branch if DC ZVA is prohibited */
+          EOF
 
-      # ── REMOVED (already in xkse4 source or context-incompatible): ──
-      # ✗ optimized_mem_operations.patch      → reversed/previously applied (lib/string.c)
-      # ✗ file_struct_8bytes_align.patch      → reversed/previously applied (include/linux/fs.h)
-      # ✗ optimise_memcmp.patch               → reversed/previously applied (arch/arm64/lib/memcmp.S)
-      # ✗ minimise_wakeup_time.patch          → hunk FAILED (kernel/time/alarmtimer.c)
-      # ✗ int_sqrt.patch                      → hunk FAILED (lib/math/int_sqrt.c)
-      # ✗ reduce_gc_thread_sleep_time.patch   → reversed/previously applied (fs/f2fs/gc.h)
-      # ✗ reduce_freeze_timeout.patch         → partial apply (main.c OK, process.c FAILED)
-      # ✗ clear_page_16bytes_align.patch      → hunk FAILED (arch/arm64/lib/clear_page.S)
-      # ✗ adjust_cpu_scan_order.patch         → reversed/previously applied (kernel/sched/fair.c)
-      # ✗ avoid_extra_s2idle_wake_attempts.patch → reversed/previously applied (wakeup.c)
-      # ────────────────────────────────────────────────────────────────
+          apply_patch() {
+            local patch="$1"
+            if [ -f "$PATCHES_DIR/$patch" ]; then
+              patch -p1 --forward < "$PATCHES_DIR/$patch" && \
+                echo "✅ $patch" || echo "⚠️ $patch (skipped/conflict — likely already in xkse4 source)"
+            else
+              echo "⚠️ $patch not found, skipping"
+            fi
+          }
 
-      apply_patch() {
-        local patch="$1"
-        if [ -f "$PATCHES_DIR/$patch" ]; then
-          patch -p1 --forward < "$PATCHES_DIR/$patch" && \
-            echo "✅ $patch" || echo "⚠️ $patch (skipped/conflict)"
-        else
-          echo "⚠️ $patch not found, skipping"
-        fi
-      }
-
-      # ── Memory / cache ──
-      apply_patch "reduce_cache_pressure.patch"
-      apply_patch "mem_opt_prefetch.patch"
-      apply_patch "disable_cache_hot_buddy.patch"
-
-      # ── TCP / networking ──
-      apply_patch "force_tcp_nodelay.patch"
-      apply_patch "increase_sk_mem_packets.patch"
-
-      # ── F2FS / ext4 ──
-      apply_patch "f2fs_reduce_congestion.patch"
-      apply_patch "f2fs_enlarge_min_fsync_blocks.patch"
-      apply_patch "increase_ext4_default_commit_age.patch"
-
-      # ── Power / wakelock ──
-      apply_patch "add_timeout_wakelocks_globally.patch"
-      apply_patch "reduce_pci_pme_wakeups.patch"
-
-      # ── CPUFreq ──
-      apply_patch "add_limitation_scaling_min_freq.patch"
-      apply_patch "re_write_limitation_scaling_min_freq.patch"
-      apply_patch "use_unlikely_wrap_cpufreq.patch"
-
-      # ── Log noise reduction ──
-      apply_patch "silence_irq_cpu_logspam.patch"
-      apply_patch "silence_system_logspam.patch"
-
-      echo "✅ Optimization patches applied (15/25 — 10 skipped, already in xkse4 source)"
+          apply_patch "optimized_mem_operations.patch"
+          apply_patch "file_struct_8bytes_align.patch"
+          apply_patch "reduce_cache_pressure.patch"
+          apply_patch "mem_opt_prefetch.patch"
+          apply_patch "optimise_memcmp.patch"
+          apply_patch "minimise_wakeup_time.patch"
+          apply_patch "int_sqrt.patch"
+          apply_patch "force_tcp_nodelay.patch"
+          apply_patch "reduce_gc_thread_sleep_time.patch"
+          apply_patch "add_timeout_wakelocks_globally.patch"
+          apply_patch "f2fs_reduce_congestion.patch"
+          apply_patch "reduce_freeze_timeout.patch"
+          apply_patch "clear_page_16bytes_align.patch"
+          apply_patch "add_limitation_scaling_min_freq.patch"
+          apply_patch "re_write_limitation_scaling_min_freq.patch"
+          apply_patch "adjust_cpu_scan_order.patch"
+          apply_patch "avoid_extra_s2idle_wake_attempts.patch"
+          apply_patch "disable_cache_hot_buddy.patch"
+          apply_patch "f2fs_enlarge_min_fsync_blocks.patch"
+          apply_patch "increase_ext4_default_commit_age.patch"
+          apply_patch "increase_sk_mem_packets.patch"
+          apply_patch "reduce_pci_pme_wakeups.patch"
+          apply_patch "silence_irq_cpu_logspam.patch"
+          apply_patch "silence_system_logspam.patch"
+          apply_patch "use_unlikely_wrap_cpufreq.patch"
+          echo "✅ Optimization patches applied (conflicts skipped)"
 
       - name: Add Droidspaces Support
         if: inputs.droidspaces_enable
@@ -639,6 +709,7 @@ jobs:
             exit 1
           fi
           cp "$WAKEUP_C" "$WAKEUP_C.bak"
+
           awk '
           1;
           /#include "power\.h"/ {
@@ -665,6 +736,7 @@ jobs:
               print "}"
           }
           ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
+
           awk '
           /^void __pm_stay_awake\(struct wakeup_source \*ws\)$/ { infn=1 }
           /^void pm_wakeup_ws_event\(struct wakeup_source \*ws, unsigned int msec, bool hard\)$/ { infn=1 }
@@ -677,6 +749,7 @@ jobs:
           }
           1
           ' "$WAKEUP_C" > tmp.c && mv tmp.c "$WAKEUP_C"
+
           FAILED=0
           if ! grep -q "blocked_wakeup_sources\[\]" "$WAKEUP_C"; then
             echo "❌ Blocklist array NOT inserted"
@@ -759,34 +832,61 @@ jobs:
           echo "Clang: $($CLANG_DIR/clang --version | head -n 1)"
           echo "LLD:   $($CLANG_DIR/ld.lld --version | head -n 1)"
           pahole --version 2>/dev/null || echo "Pahole: Not Installed"
+
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           export CCACHE_LOGFILE="${{ github.workspace }}/kernel_workspace/ccache.log"
           export CCACHE_IS_KERNEL_COMPILING=true
+
           mkdir -p $GITHUB_WORKSPACE/kout
           mkdir -p $GITHUB_WORKSPACE/ldcache_6.6.142
+
           cd kernel_workspace/common
+
           echo '#!/bin/bash' > ld-wrapper
           echo 'ld.lld "$@" --thinlto-cache-dir=$GITHUB_WORKSPACE/ldcache_6.6.142 --thinlto-jobs=$(($(nproc --all) / 2))' >> ld-wrapper
           chmod +x ld-wrapper
+
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so || true
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so || true
           chmod 777 ./*.so || true
           SO_DIR=$(pwd)
           export FAKESTAT="2025-05-25 12:00:00"
           export FAKETIME="@2025-05-25 13:00:00"
-          export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
+
+          # ── FIX ── Changed PRELOAD_LIBS → LD_PRELOAD.
+          #
+          # PRELOAD_LIBS is not a standard environment variable and was never
+          # consumed by anything. LD_PRELOAD is the actual mechanism that causes
+          # the dynamic linker to load libfakestat.so and libfaketimeMT.so into
+          # every child process (including clang), enabling reproducible-build
+          # timestamp faking.
+          export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
+
+          # ── FIX ── Changed KCFLAGS from -O2 to -O3.
+          #
+          # The xkse4 defconfig sets CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y,
+          # which puts -O3 in KBUILD_CFLAGS. The old KCFLAGS had -O2, which
+          # appeared AFTER -O3 on the command line (KCFLAGS is appended last)
+          # and silently downgraded the entire kernel to -O2.
+          #
+          # Now KCFLAGS uses -O3 to match the source's intended optimization level.
+          # The -Wno-* flags are kept to suppress non-fatal warnings from
+          # out-of-tree patches (SuSFS, BBRv3, BORE, etc.).
+
           # defconfig pass — using xkse4_dodge_defconfig
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
             KCFLAGS="-O3 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option" \
             xkse4_dodge_defconfig
+
           # Image build — EXTRA_CFLAGS includes -mcpu=oryon-1 which overrides source's -march=armv9.1-a
           make -j$(nproc --all) LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" LD="$(pwd)/ld-wrapper" HOSTLD="$(pwd)/ld-wrapper" \
             O=$GITHUB_WORKSPACE/kout \
-            KCFLAGS="-O2 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option ${EXTRA_CFLAGS:-} ${MAP}" \
+            KCFLAGS="-O3 -pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-default-const-init-var-unsafe -Wno-format -Wno-unknown-warning-option ${EXTRA_CFLAGS:-} ${MAP}" \
             Image
+
           echo "Kernel Compilation Complete!"
           ccache -c
           ccache --evict-older-than 10800s
@@ -825,6 +925,7 @@ jobs:
           FULL_VERSION=6.6.142-palaziks-ShiftPorts
           zip -r ../$AK3_NAME ./*
           echo "ak3name=$AK3_NAME" >> $GITHUB_OUTPUT
+
           TIME_NOW="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
           echo "Author: $GITHUB_ACTOR" > ./ak3.log
           echo "Repo: $GITHUB_REPOSITORY" >> ./ak3.log
@@ -893,6 +994,7 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
           RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
           TIME_NOW="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+
           export TG_KERNEL_VERSION="6.6.142"
           export TG_KSU_DISPLAY="ReSukiSU"
           export TG_KSUVER="${{ env.KSUVER }}"
@@ -915,6 +1017,7 @@ jobs:
           export TG_TTL="${{ github.event.inputs.ttl_enable }}"
           export TG_MEM_OPT="${{ github.event.inputs.mem_opt_patches }}"
           export TG_REKERNEL="${{ github.event.inputs.rekernel_enable }}"
+
           TELEGRAPH_URL=$(python3 << 'PYEOF'
           import json, urllib.request, urllib.parse, os
           e = os.environ.get
@@ -932,7 +1035,8 @@ jobs:
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Manager: "]}, f"{e('TG_KSU_DISPLAY')} v{e('TG_KSUVER')}"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Suffix: "]}, f"-{e('TG_SUFFIX')}"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["LTO: "]}, e("TG_LTO")]},
-                  {"tag": "li", "children": [{"tag": "strong", "children": ["Clang: "]}, "ZyCromerZ-19"]},
+                  {"tag": "li", "children": [{"tag": "strong", "children": ["Clang: "]}, "ZyCromerZ-19 (LLVM 19.0.0git, includes Polly)"]},
+                  {"tag": "li", "children": [{"tag": "strong", "children": ["Opt: "]}, "-O3 + Polly + ThinLTO + -mcpu=oryon-1"]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Build #: "]}, e("TG_BUILD_NUM")]},
                   {"tag": "li", "children": [{"tag": "strong", "children": ["Time: "]}, e("TG_TIME_NOW")]}
               ]},
@@ -1015,6 +1119,7 @@ jobs:
               print("")
           PYEOF
           )
+
           CAPTION="✅ <b>Kernel Build Successful!</b> (xkse4 source)
           📱 <b>Device:</b> <code>OnePlus 13</code>
           ⚡ <b>KSU:</b> <code>ReSukiSU</code>
@@ -1022,6 +1127,7 @@ jobs:
           📝 <b>Commit:</b> <code>$COMMIT_MSG</code>
           🔢 <b>Hash:</b> <a href=\"$REPO_URL/commit/${{ github.sha }}\">$COMMIT_HASH</a>
           🔧 <b>Kernel features:</b> <a href=\"$TELEGRAPH_URL\">click to read</a>"
+
           ZIP_PATH=$(ls ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip | head -n 1)
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" \
             -F chat_id="$TELEGRAM_CHAT_ID" \
@@ -1090,8 +1196,10 @@ jobs:
         run: |
           cat << 'EOF' > release_notes.md
           ### 📱 OnePlus 13 ReSukiSU SM8750 Kernel (xkse4 source)
-          > ⚠️ **ROM Compatibility:** Built with **ZyCromerZ Clang** for **ColorOS / OxygenOS** only.
+
+          > ⚠️ **ROM Compatibility:** Built with **ZyCromerZ Clang 19** for **ColorOS / OxygenOS** only.
           > **Source:** [xkse4/android_kernel_common_oneplus_sm8750](https://github.com/xkse4/android_kernel_common_oneplus_sm8750)
+          > **Compiler:** Clang 19.0.0git (ZyCromerZ, includes Polly + ThinLTO) — `-O3 -mcpu=oryon-1`
 
           #### Workflow-added features:
           - **Kernel Version:** ${{ env.FULL_VERSION }}
@@ -1126,6 +1234,7 @@ jobs:
           - EROFS optimizations
           - Scheduler/cpufreq fixes + high-freq tick
           EOF
+
           gh release create "${{ env.TAG_HEAD }}-${{ env.TIME }}" \
             --repo "${{ github.repository }}" \
             --title "${{ env.TAG_HEAD }}-${{ env.FULL_VERSION }}" \

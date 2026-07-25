@@ -1,8 +1,9 @@
 # =============================================================================
 #  xkse4 Dodge Kernel — OnePlus 13 (sm8750) — ZyCromerZ Clang 19 + Oryon-1
 #  Builds exactly as xkse4 intended, with:
-#    • ZyCromerZ Clang 19.0.0git-20240723 (same as palazik/ShiftPorts builds)
-#    • -mcpu=oryon-1 (Oryon core microarch tuning for SM8750)
+#    • ZyCromerZ Clang 19.0.0git-20240723
+#    • -mcpu=oryon-1 (Oryon scheduling) + -march=armv9.1-a+nosve (ISA)
+#      patched into arch/arm64/Makefile so both coexist without conflict
 #    • CodeLinaro build-tools (aarch64 binutils)
 #    • ThinLTO cache wrapper for faster incremental links
 #    • xkse4_dodge_defconfig (O3 + ThinLTO + Polly + ADIOS + BBRv3 + ROCCET)
@@ -144,18 +145,50 @@ jobs:
             lto-xkse4-dodge-
 
       # ──────────────────────────────────────────────────────────────────────
-      #  8.  Configure kernel
+      #  8.  Patch Makefile: Oryon-1 scheduling + ARMv9.1-A ISA (no conflict)
+      #
+      #  xkse4's Makefile has:
+      #    KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
+      #
+      #  We prepend -mcpu=oryon-1 so Clang uses the Oryon scheduling model
+      #  while -march (coming after) retains ARMv9.1-A as the ISA target.
+      #  This avoids the override problem when -mcpu is passed via KCFLAGS
+      #  (which appends AFTER KBUILD_CFLAGS on the command line).
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Patch arch/arm64/Makefile for Oryon-1 + ARMv9.1-A
+        run: |
+          echo "── Before patch ──"
+          grep -n 'march=armv9' arch/arm64/Makefile || true
+
+          sed -i \
+            's|KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng|KBUILD_CFLAGS += -mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng|' \
+            arch/arm64/Makefile
+
+          echo "── After patch ──"
+          grep -n 'oryon\|armv9' arch/arm64/Makefile
+
+          # Sanity: ensure the patch actually applied
+          grep -q '\-mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng' arch/arm64/Makefile \
+            || { echo "::error::Makefile patch failed"; exit 1; }
+
+      # ──────────────────────────────────────────────────────────────────────
+      #  9.  Configure kernel
       # ──────────────────────────────────────────────────────────────────────
       - name: Configure kernel (${{ env.DEFCONFIG }})
         run: |
           export PATH="${{ github.workspace }}/zyc-clang/bin:${{ github.workspace }}/build-tools/linux-x86/bin:$PATH"
           make LLVM=1 LLVM_IAS=1 ARCH=${{ env.ARCH }} \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               O=${{ env.OUT_DIR }} \
-               ${{ env.DEFCONFIG }}
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            O=${{ env.OUT_DIR }} \
+            ${{ env.DEFCONFIG }}
 
       # ──────────────────────────────────────────────────────────────────────
-      #  9.  Build (Image + modules) with Oryon-1 tuning
+      #  10. Build (Image + modules)
+      #
+      #  NOTE: -mcpu=oryon-1 is NOT in KCFLAGS anymore.
+      #  It lives in the patched Makefile (KBUILD_CFLAGS) so that
+      #  -march=armv9.1-a+nosve+crypto+sha3+sm4+rng comes AFTER it
+      #  on the command line, preserving the ARMv9.1-A ISA target.
       # ──────────────────────────────────────────────────────────────────────
       - name: Build kernel
         run: |
@@ -163,7 +196,7 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           mkdir -p "${{ env.LDCACHE_DIR }}"
 
-          # ThinLTO cache wrapper (same technique as palazik/ShiftPorts)
+          # ThinLTO cache wrapper
           cat > ld-wrapper << 'LDWRAP'
           #!/bin/bash
           ld.lld "$@" \
@@ -172,25 +205,47 @@ jobs:
           LDWRAP
           chmod +x ld-wrapper
 
-          # Oryon-1 microarchitecture flags for SM8750
-          # (matches palazik workflow's cpu_opt step for non-clang18 builds)
-          ORYON_FLAGS="-mcpu=oryon-1 -fno-strict-aliasing -fno-delete-null-pointer-checks"
-
           make -j"$(nproc --all)" \
-               LLVM=1 LLVM_IAS=1 ARCH=${{ env.ARCH }} \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               CC="ccache clang" \
-               LD="$(pwd)/ld-wrapper" \
-               HOSTLD="$(pwd)/ld-wrapper" \
-               O=${{ env.OUT_DIR }} \
-               KCFLAGS="-pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-unknown-warning-option ${ORYON_FLAGS}" \
-               Image modules
+            LLVM=1 LLVM_IAS=1 ARCH=${{ env.ARCH }} \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            LD="$(pwd)/ld-wrapper" \
+            HOSTLD="$(pwd)/ld-wrapper" \
+            O=${{ env.OUT_DIR }} \
+            KCFLAGS="-pipe -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int -Wno-unknown-warning-option -fno-strict-aliasing -fno-delete-null-pointer-checks" \
+            Image modules
 
           echo "── ccache stats ──"
           ccache -s
 
       # ──────────────────────────────────────────────────────────────────────
-      #  10. Save caches
+      #  11. Verify compiler flags in build output
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Verify -mcpu and -march coexist
+        run: |
+          export PATH="${{ github.workspace }}/zyc-clang/bin:${{ github.workspace }}/build-tools/linux-x86/bin:$PATH"
+
+          # Rebuild a single object verbosely to inspect the actual command line
+          make LLVM=1 LLVM_IAS=1 ARCH=${{ env.ARCH }} \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            O=${{ env.OUT_DIR }} \
+            V=1 \
+            init/main.o 2>&1 | tee /tmp/verbose_build.log
+
+          echo "── Extracted flags ──"
+          grep -oP '\-mcpu=\S+' /tmp/verbose_build.log | sort -u
+          grep -oP '\-march=\S+' /tmp/verbose_build.log | sort -u
+
+          # Assert both are present
+          grep -q '\-mcpu=oryon-1' /tmp/verbose_build.log \
+            || { echo "::error::-mcpu=oryon-1 not found in build"; exit 1; }
+          grep -q '\-march=armv9.1-a+nosve+crypto+sha3+sm4+rng' /tmp/verbose_build.log \
+            || { echo "::error::-march=armv9.1-a not found in build"; exit 1; }
+
+          echo "✅ Both -mcpu=oryon-1 and -march=armv9.1-a+nosve+crypto+sha3+sm4+rng confirmed"
+
+      # ──────────────────────────────────────────────────────────────────────
+      #  12. Save caches
       # ──────────────────────────────────────────────────────────────────────
       - name: Save ccache
         if: success()
@@ -207,7 +262,7 @@ jobs:
           key: lto-xkse4-dodge-${{ github.sha }}
 
       # ──────────────────────────────────────────────────────────────────────
-      #  11. Verify build output
+      #  13. Verify build output
       # ──────────────────────────────────────────────────────────────────────
       - name: Verify build artifacts
         run: |
@@ -219,7 +274,7 @@ jobs:
             | grep -m1 'Linux version' || true
 
       # ──────────────────────────────────────────────────────────────────────
-      #  12. Assemble AnyKernel3
+      #  14. Assemble AnyKernel3
       # ──────────────────────────────────────────────────────────────────────
       - name: Prepare AnyKernel3
         run: |
@@ -230,7 +285,6 @@ jobs:
           cat > anykernel.sh << 'EOF'
           # AnyKernel3 — OnePlus 13 (dodge / sun / sm8750)
           # xkse4 GKI 2.0 kernel — ZyCromerZ Clang 19 + Oryon-1
-
           kernel.string=xkse4 dodge kernel by xkse4 (ZyC19-Oryon)
           do.devicecheck=1
           do.modules=0
@@ -245,12 +299,10 @@ jobs:
           supported.versions=15 - 16
           supported.patchlevels=
           supported.vendorpatchlevels=
-
           BLOCK=auto;
           IS_SLOT_DEVICE=1;
           RAMDISK_COMPRESSION=auto;
           PATCH_VBMETA_FLAG=auto;
-
           dump_boot;
           write_boot;
           EOF
@@ -258,16 +310,16 @@ jobs:
           cp ${{ env.OUT_DIR }}/arch/arm64/boot/Image ./Image
 
       # ──────────────────────────────────────────────────────────────────────
-      #  13. Create flashable zip
+      #  15. Create flashable zip
       # ──────────────────────────────────────────────────────────────────────
       - name: Create AnyKernel3 zip
         run: |
           cd ak3
           zip -r9 ../xkse4-dodge-ZyC19-Oryon-AnyKernel3.zip \
-              * -x '.git' 'README.md' '*placeholder'
+            * -x '.git' 'README.md' '*placeholder'
 
       # ──────────────────────────────────────────────────────────────────────
-      #  14. Upload artifact
+      #  16. Upload artifact
       # ──────────────────────────────────────────────────────────────────────
       - name: Upload AnyKernel3 artifact
         uses: actions/upload-artifact@v4

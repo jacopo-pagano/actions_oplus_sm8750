@@ -3,7 +3,7 @@
 #  Builds exactly as xkse4 intended, with:
 #    • ZyCromerZ Clang 19.0.0git-20240723
 #    • -mcpu=oryon-1 (Oryon scheduling) + -march=armv9.1-a+nosve (ISA)
-#      patched into arch/arm64/Makefile so both coexist without conflict
+#      patched into the top-level Makefile so both coexist without conflict
 #    • CodeLinaro build-tools (aarch64 binutils)
 #    • ThinLTO cache wrapper for faster incremental links
 #    • xkse4_dodge_defconfig (O3 + ThinLTO + Polly + ADIOS + BBRv3 + ROCCET)
@@ -145,9 +145,9 @@ jobs:
             lto-xkse4-dodge-
 
       # ──────────────────────────────────────────────────────────────────────
-      #  8.  Patch Makefile: Oryon-1 scheduling + ARMv9.1-A ISA (no conflict)
+      #  8.  Patch top-level Makefile: Oryon-1 scheduling + ARMv9.1-A ISA
       #
-      #  xkse4's Makefile has:
+      #  xkse4's top-level Makefile contains (inside ifeq ($(SRCARCH),arm64)):
       #    KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
       #
       #  We prepend -mcpu=oryon-1 so Clang uses the Oryon scheduling model
@@ -155,20 +155,20 @@ jobs:
       #  This avoids the override problem when -mcpu is passed via KCFLAGS
       #  (which appends AFTER KBUILD_CFLAGS on the command line).
       # ──────────────────────────────────────────────────────────────────────
-      - name: Patch arch/arm64/Makefile for Oryon-1 + ARMv9.1-A
+      - name: Patch top-level Makefile for Oryon-1 + ARMv9.1-A
         run: |
           echo "── Before patch ──"
-          grep -n 'march=armv9' arch/arm64/Makefile || true
+          grep -n 'march=armv9' Makefile || true
 
           sed -i \
             's|KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng|KBUILD_CFLAGS += -mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng|' \
-            arch/arm64/Makefile
+            Makefile
 
           echo "── After patch ──"
-          grep -n 'oryon\|armv9' arch/arm64/Makefile
+          grep -n 'oryon\|armv9' Makefile
 
           # Sanity: ensure the patch actually applied
-          grep -q '\-mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng' arch/arm64/Makefile \
+          grep -q '\-mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng' Makefile \
             || { echo "::error::Makefile patch failed"; exit 1; }
 
       # ──────────────────────────────────────────────────────────────────────
@@ -185,8 +185,8 @@ jobs:
       # ──────────────────────────────────────────────────────────────────────
       #  10. Build (Image + modules)
       #
-      #  NOTE: -mcpu=oryon-1 is NOT in KCFLAGS anymore.
-      #  It lives in the patched Makefile (KBUILD_CFLAGS) so that
+      #  NOTE: -mcpu=oryon-1 is NOT in KCFLAGS.
+      #  It lives in the patched top-level Makefile (KBUILD_CFLAGS) so that
       #  -march=armv9.1-a+nosve+crypto+sha3+sm4+rng comes AFTER it
       #  on the command line, preserving the ARMv9.1-A ISA target.
       # ──────────────────────────────────────────────────────────────────────

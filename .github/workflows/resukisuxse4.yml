@@ -1,13 +1,5 @@
 # =============================================================================
 #  xkse4 Dodge Kernel — OnePlus 13 (sm8750) — ZyCromerZ Clang 19 + Oryon-1
-#  Builds exactly as xkse4 intended, with:
-#    • ZyCromerZ Clang 19.0.0git-20240723
-#    • -mcpu=oryon-1 (Oryon scheduling) + -march=armv9.1-a+nosve (ISA)
-#      patched into the top-level Makefile so both coexist without conflict
-#    • CodeLinaro build-tools (aarch64 binutils)
-#    • ThinLTO cache wrapper for faster incremental links
-#    • xkse4_dodge_defconfig (O3 + ThinLTO + Polly + ADIOS + BBRv3 + ROCCET)
-#    • AnyKernel3 flashable zip artifact
 # =============================================================================
 name: Build xkse4 Dodge Kernel (ZyC Clang 19 + Oryon)
 
@@ -146,14 +138,6 @@ jobs:
 
       # ──────────────────────────────────────────────────────────────────────
       #  8.  Patch top-level Makefile: Oryon-1 scheduling + ARMv9.1-A ISA
-      #
-      #  xkse4's top-level Makefile contains (inside ifeq ($(SRCARCH),arm64)):
-      #    KBUILD_CFLAGS += -march=armv9.1-a+nosve+crypto+sha3+sm4+rng
-      #
-      #  We prepend -mcpu=oryon-1 so Clang uses the Oryon scheduling model
-      #  while -march (coming after) retains ARMv9.1-A as the ISA target.
-      #  This avoids the override problem when -mcpu is passed via KCFLAGS
-      #  (which appends AFTER KBUILD_CFLAGS on the command line).
       # ──────────────────────────────────────────────────────────────────────
       - name: Patch top-level Makefile for Oryon-1 + ARMv9.1-A
         run: |
@@ -167,7 +151,6 @@ jobs:
           echo "── After patch ──"
           grep -n 'oryon\|armv9' Makefile
 
-          # Sanity: ensure the patch actually applied
           grep -q '\-mcpu=oryon-1 -march=armv9.1-a+nosve+crypto+sha3+sm4+rng' Makefile \
             || { echo "::error::Makefile patch failed"; exit 1; }
 
@@ -184,11 +167,6 @@ jobs:
 
       # ──────────────────────────────────────────────────────────────────────
       #  10. Build (Image + modules)
-      #
-      #  NOTE: -mcpu=oryon-1 is NOT in KCFLAGS.
-      #  It lives in the patched top-level Makefile (KBUILD_CFLAGS) so that
-      #  -march=armv9.1-a+nosve+crypto+sha3+sm4+rng comes AFTER it
-      #  on the command line, preserving the ARMv9.1-A ISA target.
       # ──────────────────────────────────────────────────────────────────────
       - name: Build kernel
         run: |
@@ -196,7 +174,6 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           mkdir -p "${{ env.LDCACHE_DIR }}"
 
-          # ThinLTO cache wrapper
           cat > ld-wrapper << 'LDWRAP'
           #!/bin/bash
           ld.lld "$@" \
@@ -225,7 +202,6 @@ jobs:
         run: |
           export PATH="${{ github.workspace }}/zyc-clang/bin:${{ github.workspace }}/build-tools/linux-x86/bin:$PATH"
 
-          # Rebuild a single object verbosely to inspect the actual command line
           make LLVM=1 LLVM_IAS=1 ARCH=${{ env.ARCH }} \
             CROSS_COMPILE=aarch64-linux-gnu- \
             O=${{ env.OUT_DIR }} \
@@ -236,7 +212,6 @@ jobs:
           grep -oP '\-mcpu=\S+' /tmp/verbose_build.log | sort -u
           grep -oP '\-march=\S+' /tmp/verbose_build.log | sort -u
 
-          # Assert both are present
           grep -q '\-mcpu=oryon-1' /tmp/verbose_build.log \
             || { echo "::error::-mcpu=oryon-1 not found in build"; exit 1; }
           grep -q '\-march=armv9.1-a+nosve+crypto+sha3+sm4+rng' /tmp/verbose_build.log \
@@ -274,7 +249,7 @@ jobs:
             | grep -m1 'Linux version' || true
 
       # ──────────────────────────────────────────────────────────────────────
-      #  14. Assemble AnyKernel3
+      #  14. Assemble AnyKernel3 (CORRECT FORMAT)
       # ──────────────────────────────────────────────────────────────────────
       - name: Prepare AnyKernel3
         run: |
@@ -282,9 +257,17 @@ jobs:
           cd ak3
           rm -rf .git README.md ramdisk/* patch/* modules/system
 
+          # Write anykernel.sh in the CORRECT format:
+          #   - properties() { ' ... '; } function wrapper (REQUIRED by update-binary)
+          #   - . tools/ak3-core.sh; import (REQUIRED for dump_boot/write_boot)
+          #   - Shell variables OUTSIDE the properties function
           cat > anykernel.sh << 'EOF'
-          # AnyKernel3 — OnePlus 13 (dodge / sun / sm8750)
-          # xkse4 GKI 2.0 kernel — ZyCromerZ Clang 19 + Oryon-1
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
           kernel.string=xkse4 dodge kernel by xkse4 (ZyC19-Oryon)
           do.devicecheck=1
           do.modules=0
@@ -299,13 +282,32 @@ jobs:
           supported.versions=15 - 16
           supported.patchlevels=
           supported.vendorpatchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot shell variables
           BLOCK=auto;
           IS_SLOT_DEVICE=1;
           RAMDISK_COMPRESSION=auto;
           PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
           dump_boot;
           write_boot;
+          # end boot install
           EOF
+
+          # Strip leading whitespace from heredoc (YAML indentation artifact)
+          sed -i 's/^          //' anykernel.sh
+
+          # Verify the file is correct
+          echo "── anykernel.sh content ──"
+          cat anykernel.sh
+          grep -q "properties() {" anykernel.sh || { echo "::error::properties() wrapper missing"; exit 1; }
+          grep -q "tools/ak3-core.sh" anykernel.sh || { echo "::error::ak3-core.sh import missing"; exit 1; }
 
           cp ${{ env.OUT_DIR }}/arch/arm64/boot/Image ./Image
 
@@ -316,7 +318,7 @@ jobs:
         run: |
           cd ak3
           zip -r9 ../xkse4-dodge-ZyC19-Oryon-AnyKernel3.zip \
-            * -x '.git' 'README.md' '*placeholder'
+            anykernel.sh Image META-INF tools
 
       # ──────────────────────────────────────────────────────────────────────
       #  16. Upload artifact
